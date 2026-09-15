@@ -40,3 +40,5 @@ Thumbs.db
 node/
 node-installer.msi
 node-portable.zip
+.vercel
+.env*
