@@ -144,7 +144,7 @@ export default function InvoiceModal({
         throw new Error('Printable invoice template not found')
       }
 
-      // Wait for any images inside the template to load
+      // Wait for any images inside the template to load (with timeout safety)
       const images = Array.from(element.getElementsByTagName('img'))
       await Promise.all(
         images.map((img) => {
@@ -152,6 +152,7 @@ export default function InvoiceModal({
           return new Promise((resolve) => {
             img.onload = resolve
             img.onerror = resolve
+            setTimeout(resolve, 600)
           })
         })
       )
@@ -162,7 +163,21 @@ export default function InvoiceModal({
         allowTaint: true,
         backgroundColor: '#ffffff',
         logging: false,
+        width: 800,
         windowWidth: 800,
+        scrollX: 0,
+        scrollY: 0,
+        onclone: (clonedDoc) => {
+          const el = clonedDoc.getElementById('invoice-pdf-render-zone')
+          if (el) {
+            el.style.opacity = '1'
+            el.style.zIndex = '99999'
+            el.style.left = '0px'
+            el.style.top = '0px'
+            el.style.position = 'static'
+            el.style.display = 'block'
+          }
+        },
       })
 
       const imgData = canvas.toDataURL('image/jpeg', 0.98)
@@ -238,7 +253,7 @@ export default function InvoiceModal({
     }
   }
 
-  // Share Directly to WhatsApp as PDF + Formatted message
+  // Share Directly to WhatsApp with pre-filled manual bill & automatic PDF download
   const handleShareWhatsApp = async () => {
     if (!customerName.trim()) {
       setError('Please provide customer name')
@@ -246,10 +261,8 @@ export default function InvoiceModal({
     }
 
     setShareNotice(null)
-    const result = await handleDownloadPDF()
-    if (!result) return
 
-    const { fileName, blob } = result
+    // Format detailed manual bill text for WhatsApp
     const billId = existingInvoice?.id || 'NEW_BILL'
     const validItems = items.filter(
       (it) => it.description && it.description.trim() !== ''
@@ -258,61 +271,58 @@ export default function InvoiceModal({
     const itemsText = validItems
       .map(
         (it, i) =>
-          `${i + 1}. *${it.description}* - ${it.qty} × ₹${Number(
+          `${i + 1}. *${it.description}*\n   Qty: ${it.qty} × ₹${Number(
             it.rate
           ).toFixed(2)} = ₹${Number(it.total).toFixed(2)}`
       )
       .join('\n')
 
-    const message = `🧾 *JAY MATAJI REDIUM ART & SHOW FITTING*
-*INVOICE / BILL: ${billId}*
-*Date:* ${date}
-*Customer:* ${customerName}
-${customerMobile ? `*Mobile:* ${customerMobile}\n` : ''}--------------------------------
-${itemsText || 'Fitting & Artwork Services'}
---------------------------------
-*Grand Total: ₹${grandTotal.toLocaleString('en-IN', {
+    const message = `🧾 *JAY MATAJI REDIUM ART & TRUCK SHOW FITTING*
+📍 Porbandar Khambhaliya highway bokhira, Near Vachhrajdada Temple, Porbandar 360575
+📞 Contact: 6353016927
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+📄 *BILL / INVOICE: ${billId}*
+📅 *Date:* ${date}
+👤 *Customer:* ${customerName}
+${customerMobile ? `📱 *Mobile:* ${customerMobile}\n` : ''}━━━━━━━━━━━━━━━━━━━━━━━━━━
+*ITEMIZED BILL:*
+${itemsText || '1. Redium Artwork & Vehicle Fitting Services - ₹' + grandTotal.toFixed(2)}
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+💰 *GRAND TOTAL:* ₹${grandTotal.toLocaleString('en-IN', {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
-    })}*
---------------------------------
-📍 *Address:* Porbandar Khambhaliya highway bokhira, Near Vachhrajdada Temple, Porbandar 360575
-📞 *Mobile:* 6353016927
-
+    })}
+━━━━━━━━━━━━━━━━━━━━━━━━━━
 🙏 *Thank you for choosing Jay Mataji Redium Art!*
-📄 _(Invoice PDF has been generated: ${fileName})_`
+📄 _Your official PDF invoice has been generated & downloaded to your device._`
 
     let phone = (customerMobile || '').replace(/\D/g, '')
     if (phone.length === 10) {
       phone = '91' + phone
     }
 
-    // Try native Web Share API on mobile devices with file support
-    if (typeof navigator !== 'undefined' && navigator.canShare && blob) {
-      try {
-        const file = new File([blob], fileName, { type: 'application/pdf' })
-        if (navigator.canShare({ files: [file] })) {
-          await navigator.share({
-            files: [file],
-            title: `Bill ${billId} - ${customerName}`,
-            text: message,
-          })
-          setShareNotice(`✅ Shared "${fileName}" directly to WhatsApp!`)
-          return
-        }
-      } catch (shareErr) {
-        // User cancelled or share declined, continue to WhatsApp URL fallback
-      }
-    }
-
-    const url = phone
+    const waUrl = phone
       ? `https://wa.me/${phone}?text=${encodeURIComponent(message)}`
       : `https://wa.me/?text=${encodeURIComponent(message)}`
 
-    window.open(url, '_blank')
-    setShareNotice(
-      `✅ PDF generated & downloaded as "${fileName}"! WhatsApp opened for ${customerName}. Attach the downloaded PDF file directly in the chat.`
-    )
+    // Open WhatsApp directly
+    window.open(waUrl, '_blank')
+
+    // Automatically generate and download PDF to user's device
+    try {
+      const result = await handleDownloadPDF()
+      if (result) {
+        setShareNotice(
+          `✅ PDF "${result.fileName}" downloaded! WhatsApp opened with your itemized bill for ${customerName}.`
+        )
+      } else {
+        setShareNotice(
+          `✅ WhatsApp opened with your itemized bill for ${customerName}!`
+        )
+      }
+    } catch (e) {
+      setShareNotice(`✅ WhatsApp opened with your itemized bill!`)
+    }
   }
 
   const handleSave = async () => {
@@ -381,7 +391,7 @@ ${itemsText || 'Fitting & Artwork Services'}
         ref={pdfTemplateRef}
         style={{
           position: 'fixed',
-          left: '-9999px',
+          left: 0,
           top: 0,
           width: '800px',
           backgroundColor: '#ffffff',
@@ -390,7 +400,9 @@ ${itemsText || 'Fitting & Artwork Services'}
             'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
           padding: '36px 40px',
           boxSizing: 'border-box',
-          zIndex: -9999,
+          zIndex: -100,
+          opacity: 0.005,
+          pointerEvents: 'none',
         }}
       >
         {/* Invoice Top Header */}
@@ -972,7 +984,7 @@ ${itemsText || 'Fitting & Artwork Services'}
                 </label>
                 <input
                   type="text"
-                  placeholder="Enter Customer Name (e.g. Kalpesh Ghediya)"
+                  placeholder="Enter Customer Name"
                   value={customerName}
                   onChange={(e) => setCustomerName(e.target.value)}
                   className="w-full font-bold text-gray-900 border border-gray-300 rounded-lg px-3 py-1.5 focus:border-primary focus:outline-none text-sm bg-white"
@@ -984,7 +996,7 @@ ${itemsText || 'Fitting & Artwork Services'}
                 </label>
                 <input
                   type="text"
-                  placeholder="Enter Mobile No. (e.g. 9428838045)"
+                  placeholder="Enter Mobile No."
                   value={customerMobile}
                   onChange={(e) => setCustomerMobile(e.target.value)}
                   className="w-full font-semibold text-gray-900 border border-gray-300 rounded-lg px-3 py-1.5 focus:border-primary focus:outline-none text-sm bg-white"
@@ -1027,7 +1039,7 @@ ${itemsText || 'Fitting & Artwork Services'}
                       <td className="py-1 px-2 border-r border-gray-800">
                         <input
                           type="text"
-                          placeholder="Item description (e.g. Morla, Monogram, Truck Name)"
+                          placeholder="Item description"
                           value={item.description}
                           onChange={(e) =>
                             handleItemChange(
@@ -1130,6 +1142,16 @@ ${itemsText || 'Fitting & Artwork Services'}
               className="w-full sm:w-auto px-5 py-2.5 bg-gray-200 hover:bg-gray-300 text-gray-700 font-semibold rounded-xl transition text-sm"
             >
               Cancel
+            </button>
+
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={loading || pdfLoading}
+              className="flex-1 py-2.5 bg-primary hover:bg-orange-700 text-white font-bold rounded-xl transition shadow-sm flex items-center justify-center gap-1.5 text-sm disabled:opacity-50"
+            >
+              <span>💾</span>
+              <span>{loading ? 'Saving...' : 'Save Bill'}</span>
             </button>
 
             <button

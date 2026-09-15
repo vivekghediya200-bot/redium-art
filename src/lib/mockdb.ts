@@ -481,6 +481,41 @@ export async function updateAdminPassword(
   return true
 }
 
+export async function updateAdminCredentials(
+  adminId: string,
+  updates: { newEmail?: string; newPassword?: string }
+): Promise<{ success: boolean; message?: string; admin?: any }> {
+  const admins = await getAllAdmins()
+  const idx = admins.findIndex((a: any) => a.id === adminId)
+  if (idx === -1) return { success: false, message: 'Admin not found' }
+
+  if (updates.newEmail) {
+    const normalizedEmail = updates.newEmail.toLowerCase().trim()
+    const duplicate = admins.find(
+      (a: any) =>
+        a.id !== adminId &&
+        a.email &&
+        a.email.toLowerCase().trim() === normalizedEmail
+    )
+    if (duplicate) {
+      return {
+        success: false,
+        message: 'This email is already in use by another account',
+      }
+    }
+    admins[idx].email = normalizedEmail
+  }
+
+  if (updates.newPassword) {
+    const hashedPassword = await bcrypt.hash(updates.newPassword, 10)
+    admins[idx].password = hashedPassword
+  }
+
+  admins[idx].updatedAt = new Date().toISOString()
+  fs.writeFileSync(ADMINS_FILE, JSON.stringify(admins, null, 2))
+  return { success: true, admin: admins[idx] }
+}
+
 export async function initializeDatabase() {
   await initializeAdmin()
   initializeFiles()

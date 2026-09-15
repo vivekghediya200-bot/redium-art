@@ -10,7 +10,7 @@ export default function Footer() {
           {/* Brand */}
           <div className="md:col-span-2">
             <div className="flex items-center gap-3 mb-3">
-              <div className="w-11 h-11 rounded-xl overflow-hidden bg-black flex items-center justify-center p-0.5 border border-gray-800 shadow-md flex-shrink-0">
+              <div className="w-11 h-11 rounded-xl overflow-hidden bg-white flex items-center justify-center p-0.5 shadow-md flex-shrink-0">
                 <img
                   src="/images/logo.png"
                   alt="Jay Mataji Logo"

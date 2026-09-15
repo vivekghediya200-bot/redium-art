@@ -25,6 +25,7 @@ export default function ShopReportModal({
   )
   const [pdfLoading, setPdfLoading] = useState(false)
   const [shareNotice, setShareNotice] = useState<string | null>(null)
+  const [activeTab, setActiveTab] = useState<'ledger' | 'best_clients'>('ledger')
   const pdfRef = useRef<HTMLDivElement>(null)
 
   // Flatten all invoices across all customers
@@ -139,6 +140,40 @@ export default function ShopReportModal({
       .slice(0, 5)
   }, [filteredInvoices])
 
+  // Best Clients in the selected period (ranked by total spent)
+  const bestClients = useMemo(() => {
+    const map: Record<
+      string,
+      {
+        name: string
+        mobile: string
+        totalSpent: number
+        visitCount: number
+        lastVisit: string
+      }
+    > = {}
+
+    filteredInvoices.forEach((inv) => {
+      const key = (inv.customerMobile || inv.customerName).toLowerCase().trim()
+      if (!map[key]) {
+        map[key] = {
+          name: inv.customerName,
+          mobile: inv.customerMobile || 'Not recorded',
+          totalSpent: 0,
+          visitCount: 0,
+          lastVisit: inv.date,
+        }
+      }
+      map[key].totalSpent += inv.grandTotal || 0
+      map[key].visitCount += 1
+      if (inv.date > map[key].lastVisit) {
+        map[key].lastVisit = inv.date
+      }
+    })
+
+    return Object.values(map).sort((a, b) => b.totalSpent - a.totalSpent)
+  }, [filteredInvoices])
+
   // Scope label for display
   const scopeLabel = useMemo(() => {
     switch (period) {
@@ -177,6 +212,7 @@ export default function ShopReportModal({
           return new Promise((res) => {
             img.onload = res
             img.onerror = res
+            setTimeout(res, 600)
           })
         })
       )
@@ -187,7 +223,21 @@ export default function ShopReportModal({
         allowTaint: true,
         backgroundColor: '#ffffff',
         logging: false,
+        width: 800,
         windowWidth: 800,
+        scrollX: 0,
+        scrollY: 0,
+        onclone: (clonedDoc) => {
+          const el = clonedDoc.getElementById('shop-report-pdf-zone')
+          if (el) {
+            el.style.opacity = '1'
+            el.style.zIndex = '99999'
+            el.style.left = '0px'
+            el.style.top = '0px'
+            el.style.position = 'static'
+            el.style.display = 'block'
+          }
+        },
       })
 
       const imgData = canvas.toDataURL('image/jpeg', 0.98)
@@ -255,15 +305,11 @@ export default function ShopReportModal({
     }
   }
 
-  // Share via WhatsApp
+  // Share via WhatsApp with executive summary and automatic PDF download
   const handleShareWhatsApp = async () => {
-    const result = await handleDownloadPDF()
-    if (!result) return
-
-    const { fileName, blob } = result
     const message = `📊 *JAY MATAJI REDIUM ART - BUSINESS PERFORMANCE REPORT*
 *Scope:* ${scopeLabel}
---------------------------------
+━━━━━━━━━━━━━━━━━━━━━━━━━━
 💰 *Total Revenue:* ₹${totalRevenue.toLocaleString('en-IN', {
       minimumFractionDigits: 2,
     })}
@@ -272,32 +318,25 @@ export default function ShopReportModal({
 📈 *Average Sale / Bill:* ₹${avgBillValue.toLocaleString('en-IN', {
       minimumFractionDigits: 2,
     })}
---------------------------------
+${bestClients.length > 0 ? `⭐ *Top Client:* ${bestClients[0].name} (₹${bestClients[0].totalSpent.toLocaleString('en-IN')})\n` : ''}━━━━━━━━━━━━━━━━━━━━━━━━━━
 📍 Porbandar Khambhaliya highway bokhira, Near Vachhrajdada Temple, Porbandar 360575
-📞 Mobile: 6353016927
+📞 Contact: 6353016927
 
-📄 _(Executive Shop Report PDF downloaded: ${fileName})_`
-
-    if (typeof navigator !== 'undefined' && navigator.canShare && blob) {
-      try {
-        const file = new File([blob], fileName, { type: 'application/pdf' })
-        if (navigator.canShare({ files: [file] })) {
-          await navigator.share({
-            files: [file],
-            title: `Shop Sales Report - ${scopeLabel}`,
-            text: message,
-          })
-          setShareNotice(`✅ Shared report directly via WhatsApp!`)
-          return
-        }
-      } catch (e) {
-        // Fallback to URL
-      }
-    }
+📄 _Your official Business Performance Report PDF has been downloaded to your device._`
 
     const waUrl = `https://wa.me/?text=${encodeURIComponent(message)}`
     window.open(waUrl, '_blank')
-    setShareNotice(`✅ Shop report generated as "${fileName}"! WhatsApp opened.`)
+
+    try {
+      const result = await handleDownloadPDF()
+      if (result) {
+        setShareNotice(`✅ Report downloaded as "${result.fileName}"! WhatsApp opened with executive summary.`)
+      } else {
+        setShareNotice(`✅ WhatsApp opened with executive business summary!`)
+      }
+    } catch (e) {
+      setShareNotice(`✅ WhatsApp opened with executive business summary!`)
+    }
   }
 
   return (
@@ -310,7 +349,7 @@ export default function ShopReportModal({
         ref={pdfRef}
         style={{
           position: 'fixed',
-          left: '-9999px',
+          left: 0,
           top: 0,
           width: '800px',
           backgroundColor: '#ffffff',
@@ -319,7 +358,9 @@ export default function ShopReportModal({
             'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
           padding: '36px 40px',
           boxSizing: 'border-box',
-          zIndex: -9999,
+          zIndex: -100,
+          opacity: 0.005,
+          pointerEvents: 'none',
         }}
       >
         {/* Header */}
@@ -343,7 +384,7 @@ export default function ShopReportModal({
                   width: '68px',
                   height: '68px',
                   borderRadius: '12px',
-                  backgroundColor: '#000000',
+                  backgroundColor: '#ffffff',
                   padding: '4px',
                   display: 'flex',
                   alignItems: 'center',
@@ -595,6 +636,85 @@ export default function ShopReportModal({
             </div>
           </div>
         </div>
+
+        {/* Top & Best Clients Section in PDF */}
+        {bestClients.length > 0 && (
+          <div style={{ marginBottom: '22px' }}>
+            <div
+              style={{
+                fontSize: '12px',
+                fontWeight: '800',
+                color: '#111827',
+                textTransform: 'uppercase',
+                marginBottom: '8px',
+                letterSpacing: '0.5px',
+                borderBottom: '2px solid #e5e7eb',
+                paddingBottom: '4px',
+                display: 'flex',
+                justifyContent: 'space-between',
+              }}
+            >
+              <span>⭐ Top &amp; Best Clients ({scopeLabel})</span>
+              <span style={{ fontSize: '10px', color: '#6b7280', fontWeight: '600' }}>
+                Ranked by Total Purchases
+              </span>
+            </div>
+            <table
+              style={{
+                width: '100%',
+                borderCollapse: 'collapse',
+                tableLayout: 'fixed',
+                fontSize: '11px',
+                marginBottom: '8px',
+              }}
+            >
+              <thead>
+                <tr
+                  style={{
+                    backgroundColor: '#f3f4f6',
+                    borderTop: '1px solid #d1d5db',
+                    borderBottom: '1px solid #d1d5db',
+                    fontWeight: '700',
+                    color: '#374151',
+                  }}
+                >
+                  <th style={{ width: '10%', padding: '6px', textAlign: 'center' }}>Rank</th>
+                  <th style={{ width: '38%', padding: '6px 8px', textAlign: 'left' }}>Client Name</th>
+                  <th style={{ width: '24%', padding: '6px 8px', textAlign: 'left' }}>Mobile No</th>
+                  <th style={{ width: '13%', padding: '6px 8px', textAlign: 'center' }}>Visits</th>
+                  <th style={{ width: '15%', padding: '6px 8px', textAlign: 'right' }}>Total (₹)</th>
+                </tr>
+              </thead>
+              <tbody>
+                {bestClients.slice(0, 8).map((client, idx) => (
+                  <tr
+                    key={idx}
+                    style={{
+                      borderBottom: '1px solid #e5e7eb',
+                      color: '#1f2937',
+                    }}
+                  >
+                    <td style={{ padding: '6px', textAlign: 'center', fontWeight: '700' }}>
+                      {idx === 0 ? '🥇 #1' : idx === 1 ? '🥈 #2' : idx === 2 ? '🥉 #3' : `#${idx + 1}`}
+                    </td>
+                    <td style={{ padding: '6px 8px', textAlign: 'left', fontWeight: '700' }}>
+                      {client.name}
+                    </td>
+                    <td style={{ padding: '6px 8px', textAlign: 'left', color: '#4b5563' }}>
+                      {client.mobile}
+                    </td>
+                    <td style={{ padding: '6px 8px', textAlign: 'center', fontWeight: '600' }}>
+                      {client.visitCount}
+                    </td>
+                    <td style={{ padding: '6px 8px', textAlign: 'right', fontWeight: '800', color: '#c2410c' }}>
+                      ₹{client.totalSpent.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
 
         {/* Transactions Table */}
         <table
@@ -1082,100 +1202,262 @@ export default function ShopReportModal({
               </div>
             )}
 
-            {/* Transaction Ledger Table */}
-            <div>
-              <h4 className="text-sm font-extrabold uppercase tracking-wider text-gray-700 mb-3 flex items-center justify-between">
-                <span className="flex items-center gap-2">
-                  <span>📋</span> Detailed Sales Ledger ({filteredInvoices.length} Bills)
-                </span>
-                <span className="text-xs font-semibold text-gray-500 lowercase">
-                  sorted by date descending
-                </span>
-              </h4>
+            {/* View Switcher Tabs: Ledger vs Best Clients */}
+            <div className="flex items-center gap-2 border-b border-gray-200 pb-3">
+              <button
+                type="button"
+                onClick={() => setActiveTab('ledger')}
+                className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-bold transition flex items-center gap-2 ${
+                  activeTab === 'ledger'
+                    ? 'bg-primary text-white shadow-sm'
+                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                }`}
+              >
+                <span>📋</span> Detailed Sales Ledger ({filteredInvoices.length} Bills)
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab('best_clients')}
+                className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-bold transition flex items-center gap-2 ${
+                  activeTab === 'best_clients'
+                    ? 'bg-amber-600 text-white shadow-sm'
+                    : 'bg-amber-50 text-amber-900 hover:bg-amber-100 border border-amber-200'
+                }`}
+              >
+                <span>⭐</span> Our Best Clients ({bestClients.length})
+              </button>
+            </div>
 
-              <div className="border border-gray-200 rounded-2xl overflow-hidden shadow-sm">
-                <table className="w-full text-xs sm:text-sm text-left border-collapse">
-                  <thead>
-                    <tr className="bg-gray-100 border-b border-gray-200 text-gray-700 font-bold uppercase text-[11px]">
-                      <th className="py-3 px-3 w-12 text-center">#</th>
-                      <th className="py-3 px-3 w-28 text-center">Date</th>
-                      <th className="py-3 px-3 w-28 text-center">Bill ID</th>
-                      <th className="py-3 px-4 w-44">Customer</th>
-                      <th className="py-3 px-4">Work / Items</th>
-                      <th className="py-3 px-4 w-32 text-right">Amount (₹)</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100">
-                    {filteredInvoices.length === 0 ? (
-                      <tr>
-                        <td
-                          colSpan={6}
-                          className="py-12 text-center text-gray-400 font-medium"
-                        >
-                          No sales recorded in this period.
-                        </td>
+            {/* View 1: Detailed Sales Ledger */}
+            {activeTab === 'ledger' && (
+              <div>
+                <h4 className="text-sm font-extrabold uppercase tracking-wider text-gray-700 mb-3 flex items-center justify-between">
+                  <span className="flex items-center gap-2">
+                    <span>📋</span> Detailed Sales Ledger ({filteredInvoices.length} Bills)
+                  </span>
+                  <span className="text-xs font-semibold text-gray-500 lowercase">
+                    sorted by date descending
+                  </span>
+                </h4>
+
+                <div className="border border-gray-200 rounded-2xl overflow-hidden shadow-sm">
+                  <table className="w-full text-xs sm:text-sm text-left border-collapse">
+                    <thead>
+                      <tr className="bg-gray-100 border-b border-gray-200 text-gray-700 font-bold uppercase text-[11px]">
+                        <th className="py-3 px-3 w-12 text-center">#</th>
+                        <th className="py-3 px-3 w-28 text-center">Date</th>
+                        <th className="py-3 px-3 w-28 text-center">Bill ID</th>
+                        <th className="py-3 px-4 w-44">Customer</th>
+                        <th className="py-3 px-4">Work / Items</th>
+                        <th className="py-3 px-4 w-32 text-right">Amount (₹)</th>
                       </tr>
-                    ) : (
-                      filteredInvoices.map((inv, idx) => (
-                        <tr
-                          key={inv.id}
-                          className="hover:bg-gray-50/70 transition"
-                        >
-                          <td className="py-3 px-3 text-center font-bold text-gray-500">
-                            {idx + 1}
-                          </td>
-                          <td className="py-3 px-3 text-center font-semibold text-gray-700">
-                            {inv.date}
-                          </td>
-                          <td className="py-3 px-3 text-center">
-                            <span className="px-2.5 py-1 bg-sky-100 text-sky-800 rounded-md font-bold text-xs">
-                              {inv.id}
-                            </span>
-                          </td>
-                          <td className="py-3 px-4">
-                            <p className="font-bold text-gray-900">
-                              {inv.customerName}
-                            </p>
-                            <p className="text-[11px] text-gray-500">
-                              {inv.customerMobile || 'No phone'}
-                            </p>
-                          </td>
-                          <td className="py-3 px-4 text-gray-700">
-                            <div className="line-clamp-2">
-                              {inv.items
-                                .map((it) => `${it.description} (${it.qty})`)
-                                .join(', ')}
-                            </div>
-                          </td>
-                          <td className="py-3 px-4 text-right font-black text-gray-900 text-sm">
-                            ₹
-                            {inv.grandTotal.toLocaleString('en-IN', {
-                              minimumFractionDigits: 2,
-                            })}
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {filteredInvoices.length === 0 ? (
+                        <tr>
+                          <td
+                            colSpan={6}
+                            className="py-12 text-center text-gray-400 font-medium"
+                          >
+                            No sales recorded in this period.
                           </td>
                         </tr>
-                      ))
-                    )}
-                  </tbody>
-                  <tfoot>
-                    <tr className="bg-orange-50 font-bold border-t-2 border-orange-200">
-                      <td
-                        colSpan={5}
-                        className="py-3 px-4 text-right text-xs uppercase tracking-wider text-orange-900 font-extrabold"
-                      >
-                        Total Period Revenue:
-                      </td>
-                      <td className="py-3 px-4 text-right text-base font-black text-orange-600">
-                        ₹
-                        {totalRevenue.toLocaleString('en-IN', {
-                          minimumFractionDigits: 2,
-                        })}
-                      </td>
-                    </tr>
-                  </tfoot>
-                </table>
+                      ) : (
+                        filteredInvoices.map((inv, idx) => (
+                          <tr
+                            key={inv.id}
+                            className="hover:bg-gray-50/70 transition"
+                          >
+                            <td className="py-3 px-3 text-center font-bold text-gray-500">
+                              {idx + 1}
+                            </td>
+                            <td className="py-3 px-3 text-center font-semibold text-gray-700">
+                              {inv.date}
+                            </td>
+                            <td className="py-3 px-3 text-center">
+                              <span className="px-2.5 py-1 bg-sky-100 text-sky-800 rounded-md font-bold text-xs">
+                                {inv.id}
+                              </span>
+                            </td>
+                            <td className="py-3 px-4">
+                              <p className="font-bold text-gray-900">
+                                {inv.customerName}
+                              </p>
+                              <p className="text-[11px] text-gray-500">
+                                {inv.customerMobile || 'No phone'}
+                              </p>
+                            </td>
+                            <td className="py-3 px-4 text-gray-700">
+                              <div className="line-clamp-2">
+                                {inv.items
+                                  .map((it) => `${it.description} (${it.qty})`)
+                                  .join(', ')}
+                              </div>
+                            </td>
+                            <td className="py-3 px-4 text-right font-black text-gray-900 text-sm">
+                              ₹
+                              {inv.grandTotal.toLocaleString('en-IN', {
+                                minimumFractionDigits: 2,
+                              })}
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                    <tfoot>
+                      <tr className="bg-orange-50 font-bold border-t-2 border-orange-200">
+                        <td
+                          colSpan={5}
+                          className="py-3 px-4 text-right text-xs uppercase tracking-wider text-orange-900 font-extrabold"
+                        >
+                          Total Period Revenue:
+                        </td>
+                        <td className="py-3 px-4 text-right text-base font-black text-orange-600">
+                          ₹
+                          {totalRevenue.toLocaleString('en-IN', {
+                            minimumFractionDigits: 2,
+                          })}
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
               </div>
-            </div>
+            )}
+
+            {/* View 2: Our Best Clients (Top Customers) */}
+            {activeTab === 'best_clients' && (
+              <div>
+                <h4 className="text-sm font-extrabold uppercase tracking-wider text-gray-700 mb-3 flex items-center justify-between">
+                  <span className="flex items-center gap-2">
+                    <span>⭐</span> Ranked Top Clients &amp; Repeat Customers ({bestClients.length})
+                  </span>
+                  <span className="text-xs font-semibold text-gray-500">
+                    Highest spenders for {scopeLabel}
+                  </span>
+                </h4>
+
+                <div className="border border-gray-200 rounded-2xl overflow-hidden shadow-sm">
+                  <table className="w-full text-xs sm:text-sm text-left border-collapse">
+                    <thead>
+                      <tr className="bg-amber-50 border-b border-amber-200 text-amber-950 font-bold uppercase text-[11px]">
+                        <th className="py-3 px-3 w-16 text-center">Rank</th>
+                        <th className="py-3 px-4 w-48">Client Name</th>
+                        <th className="py-3 px-4 w-36">Mobile No</th>
+                        <th className="py-3 px-3 w-24 text-center">Visits / Bills</th>
+                        <th className="py-3 px-4 w-32 text-center">Last Purchase</th>
+                        <th className="py-3 px-3 w-28 text-center">% Revenue</th>
+                        <th className="py-3 px-4 w-36 text-right">Total Purchases (₹)</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100">
+                      {bestClients.length === 0 ? (
+                        <tr>
+                          <td
+                            colSpan={7}
+                            className="py-12 text-center text-gray-400 font-medium"
+                          >
+                            No client transactions recorded in this period.
+                          </td>
+                        </tr>
+                      ) : (
+                        bestClients.map((client, idx) => {
+                          const revenuePercent =
+                            totalRevenue > 0
+                              ? ((client.totalSpent / totalRevenue) * 100).toFixed(1)
+                              : '0.0'
+
+                          return (
+                            <tr
+                              key={idx}
+                              className={`transition ${
+                                idx === 0
+                                  ? 'bg-amber-50/40 hover:bg-amber-50/70 font-semibold'
+                                  : idx === 1
+                                  ? 'bg-orange-50/20 hover:bg-orange-50/50'
+                                  : 'hover:bg-gray-50/70'
+                              }`}
+                            >
+                              <td className="py-3 px-3 text-center font-bold">
+                                {idx === 0 ? (
+                                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-extrabold bg-amber-400 text-amber-950 shadow-sm">
+                                    🥇 #1
+                                  </span>
+                                ) : idx === 1 ? (
+                                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-extrabold bg-slate-300 text-slate-800 shadow-sm">
+                                    🥈 #2
+                                  </span>
+                                ) : idx === 2 ? (
+                                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-extrabold bg-amber-700/20 text-amber-900 shadow-sm">
+                                    🥉 #3
+                                  </span>
+                                ) : (
+                                  <span className="text-gray-500 font-bold text-xs">
+                                    #{idx + 1}
+                                  </span>
+                                )}
+                              </td>
+                              <td className="py-3 px-4 font-bold text-gray-900 text-sm">
+                                {client.name}
+                              </td>
+                              <td className="py-3 px-4 font-semibold text-gray-600">
+                                {client.mobile !== 'Not recorded' ? (
+                                  <a
+                                    href={`https://wa.me/91${client.mobile.replace(/\D/g, '')}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="text-emerald-700 hover:underline flex items-center gap-1 font-bold"
+                                  >
+                                    <span>💬</span> {client.mobile}
+                                  </a>
+                                ) : (
+                                  <span className="text-gray-400 font-normal">N/A</span>
+                                )}
+                              </td>
+                              <td className="py-3 px-3 text-center">
+                                <span className="px-2.5 py-1 bg-gray-100 rounded-full font-bold text-xs text-gray-800">
+                                  {client.visitCount} visit{client.visitCount !== 1 ? 's' : ''}
+                                </span>
+                              </td>
+                              <td className="py-3 px-4 text-center text-xs font-medium text-gray-600">
+                                {client.lastVisit}
+                              </td>
+                              <td className="py-3 px-3 text-center">
+                                <span className="px-2 py-0.5 bg-orange-100 text-orange-800 font-extrabold rounded-md text-xs">
+                                  {revenuePercent}%
+                                </span>
+                              </td>
+                              <td className="py-3 px-4 text-right font-black text-orange-600 text-sm">
+                                ₹
+                                {client.totalSpent.toLocaleString('en-IN', {
+                                  minimumFractionDigits: 2,
+                                })}
+                              </td>
+                            </tr>
+                          )
+                        })
+                      )}
+                    </tbody>
+                    <tfoot>
+                      <tr className="bg-amber-100/60 font-bold border-t-2 border-amber-300">
+                        <td
+                          colSpan={6}
+                          className="py-3 px-4 text-right text-xs uppercase tracking-wider text-amber-950 font-extrabold"
+                        >
+                          Total Revenue from Top Clients:
+                        </td>
+                        <td className="py-3 px-4 text-right text-base font-black text-amber-800">
+                          ₹
+                          {totalRevenue.toLocaleString('en-IN', {
+                            minimumFractionDigits: 2,
+                          })}
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Footer Bar */}

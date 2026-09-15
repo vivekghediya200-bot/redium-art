@@ -107,7 +107,7 @@ export default function CustomerHistoryView() {
         <form onSubmit={handleSearch} className="flex gap-2 flex-1 max-w-md">
           <input
             type="text"
-            placeholder="Search customer by name or phone (e.g. Vivek)..."
+            placeholder="Search customer by name or phone..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="flex-1 px-4 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-primary"
@@ -236,7 +236,7 @@ export default function CustomerHistoryView() {
                         {selectedCustomer.name}
                       </h3>
                       <p className="text-xs sm:text-sm text-gray-600">
-                        Mobile: {selectedCustomer.mobile || 'Not recorded'} • Customer ID: {selectedCustomer.id}
+                        Mobile: {selectedCustomer.mobile || 'Not recorded'}
                       </p>
                     </div>
                   </div>

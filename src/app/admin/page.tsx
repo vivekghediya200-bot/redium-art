@@ -50,7 +50,7 @@ export default function AdminLogin() {
       <div className="bg-white p-8 sm:p-10 rounded-3xl shadow-2xl max-w-md w-full border border-gray-100 animate-in fade-in zoom-in-95 duration-200">
         {/* Brand Header with Logo */}
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-24 h-24 rounded-2xl bg-black overflow-hidden shadow-xl mb-4 p-1.5 border border-primary/30">
+          <div className="inline-flex items-center justify-center w-24 h-24 rounded-2xl bg-white overflow-hidden shadow-md mb-4 p-1.5 border border-gray-100">
             <img
               src="/images/logo.png"
               alt="Jay Mataji Logo"

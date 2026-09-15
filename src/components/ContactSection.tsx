@@ -121,7 +121,7 @@ export default function ContactSection() {
               </label>
               <textarea
                 required
-                placeholder="Describe your requirements (e.g., truck show fitting, number plate redium, custom sticker size)..."
+                placeholder="Describe your requirements (truck show fitting, number plate redium, custom sticker size)..."
                 rows={4}
                 value={message}
                 onChange={(e) => setMessage(e.target.value)}

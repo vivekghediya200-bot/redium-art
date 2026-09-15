@@ -61,6 +61,7 @@ export default function CustomerReportModal({
           return new Promise((res) => {
             img.onload = res
             img.onerror = res
+            setTimeout(res, 600)
           })
         })
       )
@@ -71,7 +72,21 @@ export default function CustomerReportModal({
         allowTaint: true,
         backgroundColor: '#ffffff',
         logging: false,
+        width: 800,
         windowWidth: 800,
+        scrollX: 0,
+        scrollY: 0,
+        onclone: (clonedDoc) => {
+          const el = clonedDoc.getElementById('customer-statement-pdf-zone')
+          if (el) {
+            el.style.opacity = '1'
+            el.style.zIndex = '99999'
+            el.style.left = '0px'
+            el.style.top = '0px'
+            el.style.position = 'static'
+            el.style.display = 'block'
+          }
+        },
       })
 
       const imgData = canvas.toDataURL('image/jpeg', 0.98)
@@ -207,7 +222,7 @@ export default function CustomerReportModal({
         ref={pdfRef}
         style={{
           position: 'fixed',
-          left: '-9999px',
+          left: 0,
           top: 0,
           width: '800px',
           backgroundColor: '#ffffff',
@@ -216,7 +231,9 @@ export default function CustomerReportModal({
             'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
           padding: '36px 40px',
           boxSizing: 'border-box',
-          zIndex: -9999,
+          zIndex: -100,
+          opacity: 0.005,
+          pointerEvents: 'none',
         }}
       >
         {/* Header with Brand Logo */}
@@ -240,7 +257,7 @@ export default function CustomerReportModal({
                   width: '68px',
                   height: '68px',
                   borderRadius: '12px',
-                  backgroundColor: '#000000',
+                  backgroundColor: '#ffffff',
                   padding: '4px',
                   display: 'flex',
                   alignItems: 'center',

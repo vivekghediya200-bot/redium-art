@@ -10,7 +10,7 @@ export default function Header() {
     <header className="sticky top-0 z-40 bg-white/95 backdrop-blur-md shadow-sm border-b border-gray-100">
       <nav className="max-w-7xl mx-auto px-4 sm:px-6 py-3.5 flex justify-between items-center">
         <Link href="/" className="flex items-center gap-3 group">
-          <div className="w-12 h-12 rounded-xl overflow-hidden shadow-md bg-black flex items-center justify-center p-0.5 border border-primary/20 group-hover:border-primary transition flex-shrink-0">
+          <div className="w-12 h-12 flex items-center justify-center flex-shrink-0">
             <img
               src="/images/logo.png"
               alt="Jay Mataji Redium Art Logo"
