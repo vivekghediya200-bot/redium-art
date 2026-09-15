@@ -1,0 +1,1203 @@
+'use client'
+
+import { useState, useMemo, useRef } from 'react'
+import html2canvas from 'html2canvas'
+import { jsPDF } from 'jspdf'
+import { CustomerData } from './CustomerHistoryView'
+
+interface ShopReportModalProps {
+  customers: CustomerData[]
+  onClose: () => void
+}
+
+type PeriodFilter = 'lifetime' | 'today' | 'this_week' | 'this_month' | 'this_year' | 'custom'
+
+export default function ShopReportModal({
+  customers,
+  onClose,
+}: ShopReportModalProps) {
+  const [period, setPeriod] = useState<PeriodFilter>('lifetime')
+  const [startDate, setStartDate] = useState(
+    new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+  )
+  const [endDate, setEndDate] = useState(
+    new Date().toISOString().split('T')[0]
+  )
+  const [pdfLoading, setPdfLoading] = useState(false)
+  const [shareNotice, setShareNotice] = useState<string | null>(null)
+  const pdfRef = useRef<HTMLDivElement>(null)
+
+  // Flatten all invoices across all customers
+  const allInvoices = useMemo(() => {
+    const list: Array<{
+      id: string
+      date: string
+      customerName: string
+      customerMobile: string
+      grandTotal: number
+      items: Array<{
+        description: string
+        qty: number
+        rate: number
+        total: number
+      }>
+    }> = []
+
+    customers.forEach((cust) => {
+      cust.invoices.forEach((inv) => {
+        list.push({
+          id: inv.id,
+          date: inv.date,
+          customerName: cust.name,
+          customerMobile: cust.mobile,
+          grandTotal: inv.grandTotal,
+          items: inv.items,
+        })
+      })
+    })
+
+    return list.sort(
+      (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+    )
+  }, [customers])
+
+  // Filter invoices based on selected period
+  const filteredInvoices = useMemo(() => {
+    const todayStr = new Date().toISOString().split('T')[0]
+    const now = new Date()
+
+    if (period === 'lifetime') {
+      return allInvoices
+    }
+
+    if (period === 'today') {
+      return allInvoices.filter((inv) => inv.date === todayStr)
+    }
+
+    if (period === 'this_week') {
+      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
+      return allInvoices.filter((inv) => new Date(inv.date) >= sevenDaysAgo)
+    }
+
+    if (period === 'this_month') {
+      const currentYear = now.getFullYear()
+      const currentMonth = now.getMonth() // 0-indexed
+      return allInvoices.filter((inv) => {
+        const d = new Date(inv.date)
+        return (
+          d.getFullYear() === currentYear && d.getMonth() === currentMonth
+        )
+      })
+    }
+
+    if (period === 'this_year') {
+      const currentYear = now.getFullYear()
+      return allInvoices.filter((inv) => {
+        const d = new Date(inv.date)
+        return d.getFullYear() === currentYear
+      })
+    }
+
+    if (period === 'custom') {
+      return allInvoices.filter((inv) => {
+        return inv.date >= startDate && inv.date <= endDate
+      })
+    }
+
+    return allInvoices
+  }, [allInvoices, period, startDate, endDate])
+
+  // Aggregated Stats
+  const totalRevenue = useMemo(() => {
+    return filteredInvoices.reduce((sum, inv) => sum + (inv.grandTotal || 0), 0)
+  }, [filteredInvoices])
+
+  const totalBills = filteredInvoices.length
+  const avgBillValue = totalBills > 0 ? totalRevenue / totalBills : 0
+
+  const uniqueCustomersCount = useMemo(() => {
+    const set = new Set<string>()
+    filteredInvoices.forEach((inv) => set.add(inv.customerName.toLowerCase()))
+    return set.size
+  }, [filteredInvoices])
+
+  // Top services / items breakdown
+  const topItems = useMemo(() => {
+    const map: Record<string, { count: number; revenue: number }> = {}
+    filteredInvoices.forEach((inv) => {
+      inv.items.forEach((item) => {
+        const name = (item.description || 'Artwork Work').trim()
+        if (!map[name]) map[name] = { count: 0, revenue: 0 }
+        map[name].count += Number(item.qty) || 1
+        map[name].revenue += Number(item.total) || 0
+      })
+    })
+
+    return Object.entries(map)
+      .map(([name, data]) => ({ name, ...data }))
+      .sort((a, b) => b.revenue - a.revenue)
+      .slice(0, 5)
+  }, [filteredInvoices])
+
+  // Scope label for display
+  const scopeLabel = useMemo(() => {
+    switch (period) {
+      case 'lifetime':
+        return 'Lifetime (All-Time Full Shop Report)'
+      case 'today':
+        return `Today (${new Date().toLocaleDateString('en-GB')})`
+      case 'this_week':
+        return 'Past 7 Days'
+      case 'this_month':
+        return `Current Month (${new Date().toLocaleString('default', {
+          month: 'long',
+          year: 'numeric',
+        })})`
+      case 'this_year':
+        return `Current Year (${new Date().getFullYear()})`
+      case 'custom':
+        return `Custom Period: ${startDate} to ${endDate}`
+    }
+  }, [period, startDate, endDate])
+
+  // Generate & Download PDF
+  const handleDownloadPDF = async (): Promise<{
+    fileName: string
+    blob: Blob
+  } | null> => {
+    setPdfLoading(true)
+    try {
+      const element = document.getElementById('shop-report-pdf-zone')
+      if (!element) throw new Error('Report template not found')
+
+      const images = Array.from(element.getElementsByTagName('img'))
+      await Promise.all(
+        images.map((img) => {
+          if (img.complete) return Promise.resolve()
+          return new Promise((res) => {
+            img.onload = res
+            img.onerror = res
+          })
+        })
+      )
+
+      const canvas = await html2canvas(element, {
+        scale: 2,
+        useCORS: true,
+        allowTaint: true,
+        backgroundColor: '#ffffff',
+        logging: false,
+        windowWidth: 800,
+      })
+
+      const imgData = canvas.toDataURL('image/jpeg', 0.98)
+      const pdf = new jsPDF({
+        orientation: 'portrait',
+        unit: 'mm',
+        format: 'a4',
+      })
+
+      const pageWidth = pdf.internal.pageSize.getWidth()
+      const pageHeight = pdf.internal.pageSize.getHeight()
+      const margin = 6
+      const contentWidth = pageWidth - margin * 2
+      const contentHeight = (canvas.height * contentWidth) / canvas.width
+
+      if (contentHeight <= pageHeight - margin * 2) {
+        pdf.addImage(
+          imgData,
+          'JPEG',
+          margin,
+          margin,
+          contentWidth,
+          contentHeight
+        )
+      } else {
+        let heightLeft = contentHeight
+        let position = margin
+
+        pdf.addImage(
+          imgData,
+          'JPEG',
+          margin,
+          position,
+          contentWidth,
+          contentHeight
+        )
+        heightLeft -= pageHeight - margin * 2
+
+        while (heightLeft > 0) {
+          position = heightLeft - contentHeight
+          pdf.addPage()
+          pdf.addImage(
+            imgData,
+            'JPEG',
+            margin,
+            position,
+            contentWidth,
+            contentHeight
+          )
+          heightLeft -= pageHeight
+        }
+      }
+
+      const fileName = `JayMataji_ShopReport_${period}_${new Date()
+        .toISOString()
+        .split('T')[0]}.pdf`
+      pdf.save(fileName)
+      const blob = pdf.output('blob')
+      return { fileName, blob }
+    } catch (err) {
+      console.error('Shop report PDF generation error:', err)
+      return null
+    } finally {
+      setPdfLoading(false)
+    }
+  }
+
+  // Share via WhatsApp
+  const handleShareWhatsApp = async () => {
+    const result = await handleDownloadPDF()
+    if (!result) return
+
+    const { fileName, blob } = result
+    const message = `📊 *JAY MATAJI REDIUM ART - BUSINESS PERFORMANCE REPORT*
+*Scope:* ${scopeLabel}
+--------------------------------
+💰 *Total Revenue:* ₹${totalRevenue.toLocaleString('en-IN', {
+      minimumFractionDigits: 2,
+    })}
+🧾 *Total Invoices:* ${totalBills}
+👥 *Unique Customers:* ${uniqueCustomersCount}
+📈 *Average Sale / Bill:* ₹${avgBillValue.toLocaleString('en-IN', {
+      minimumFractionDigits: 2,
+    })}
+--------------------------------
+📍 Porbandar Khambhaliya highway bokhira, Near Vachhrajdada Temple, Porbandar 360575
+📞 Mobile: 6353016927
+
+📄 _(Executive Shop Report PDF downloaded: ${fileName})_`
+
+    if (typeof navigator !== 'undefined' && navigator.canShare && blob) {
+      try {
+        const file = new File([blob], fileName, { type: 'application/pdf' })
+        if (navigator.canShare({ files: [file] })) {
+          await navigator.share({
+            files: [file],
+            title: `Shop Sales Report - ${scopeLabel}`,
+            text: message,
+          })
+          setShareNotice(`✅ Shared report directly via WhatsApp!`)
+          return
+        }
+      } catch (e) {
+        // Fallback to URL
+      }
+    }
+
+    const waUrl = `https://wa.me/?text=${encodeURIComponent(message)}`
+    window.open(waUrl, '_blank')
+    setShareNotice(`✅ Shop report generated as "${fileName}"! WhatsApp opened.`)
+  }
+
+  return (
+    <>
+      {/* =========================================================================
+          1. DEDICATED OFF-SCREEN A4 REPORT TEMPLATE (FOR HIGH-RES PDF)
+         ========================================================================= */}
+      <div
+        id="shop-report-pdf-zone"
+        ref={pdfRef}
+        style={{
+          position: 'fixed',
+          left: '-9999px',
+          top: 0,
+          width: '800px',
+          backgroundColor: '#ffffff',
+          color: '#111827',
+          fontFamily:
+            'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif',
+          padding: '36px 40px',
+          boxSizing: 'border-box',
+          zIndex: -9999,
+        }}
+      >
+        {/* Header */}
+        <div
+          style={{
+            borderBottom: '3px solid #1f2937',
+            paddingBottom: '16px',
+            marginBottom: '16px',
+          }}
+        >
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+              <div
+                style={{
+                  width: '68px',
+                  height: '68px',
+                  borderRadius: '12px',
+                  backgroundColor: '#000000',
+                  padding: '4px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  border: '1px solid #d1d5db',
+                  flexShrink: 0,
+                }}
+              >
+                <img
+                  src="/images/logo.png"
+                  alt="Logo"
+                  style={{
+                    width: '100%',
+                    height: '100%',
+                    objectFit: 'contain',
+                  }}
+                />
+              </div>
+              <div>
+                <h1
+                  style={{
+                    fontSize: '22px',
+                    fontWeight: '900',
+                    margin: 0,
+                    lineHeight: '1.2',
+                    color: '#111827',
+                  }}
+                >
+                  <span style={{ color: '#dc2626' }}>J</span>AY{' '}
+                  <span style={{ color: '#dc2626' }}>M</span>ATAJI{' '}
+                  <span style={{ color: '#dc2626' }}>R</span>EDIUM ART &amp;
+                </h1>
+                <h2
+                  style={{
+                    fontSize: '17px',
+                    fontWeight: '800',
+                    margin: '3px 0 0 0',
+                    color: '#374151',
+                  }}
+                >
+                  SHOW FITTING
+                </h2>
+                <p
+                  style={{
+                    fontSize: '11px',
+                    margin: '4px 0 0 0',
+                    color: '#ea580c',
+                    fontWeight: '700',
+                    textTransform: 'uppercase',
+                  }}
+                >
+                  Truck Show Fitting • Vehicle Wraps • Radium Art • Number Plates
+                </p>
+              </div>
+            </div>
+
+            <div style={{ textAlign: 'right' }}>
+              <div
+                style={{
+                  fontSize: '19px',
+                  fontWeight: '900',
+                  color: '#075985',
+                  letterSpacing: '1px',
+                }}
+              >
+                BUSINESS PERFORMANCE REPORT
+              </div>
+              <div
+                style={{
+                  fontSize: '11px',
+                  fontWeight: '700',
+                  color: '#4b5563',
+                  marginTop: '4px',
+                }}
+              >
+                Date:{' '}
+                <span style={{ color: '#111827' }}>
+                  {new Date().toLocaleDateString('en-GB')}
+                </span>
+              </div>
+              <div
+                style={{
+                  fontSize: '11px',
+                  fontWeight: '700',
+                  color: '#ea580c',
+                }}
+              >
+                {scopeLabel}
+              </div>
+            </div>
+          </div>
+
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              fontSize: '12px',
+              color: '#374151',
+              marginTop: '12px',
+              paddingTop: '10px',
+              borderTop: '1px solid #e5e7eb',
+            }}
+          >
+            <div>
+              <strong>Shop Contact:</strong>{' '}
+              <span style={{ fontWeight: '800', color: '#111827' }}>
+                6353016927
+              </span>
+            </div>
+            <div style={{ textAlign: 'right', maxWidth: '440px' }}>
+              <strong>Address:</strong> Porbandar Khambhaliya highway, Near
+              Vachhrajdada Temple, Bokhira, Porbandar - 360575
+            </div>
+          </div>
+        </div>
+
+        {/* Executive Metrics Grid */}
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(4, 1fr)',
+            gap: '12px',
+            marginBottom: '18px',
+          }}
+        >
+          <div
+            style={{
+              border: '1.5px solid #fdba74',
+              borderRadius: '8px',
+              padding: '12px 14px',
+              backgroundColor: '#fff7ed',
+            }}
+          >
+            <div
+              style={{
+                fontSize: '11px',
+                fontWeight: '800',
+                color: '#c2410c',
+                textTransform: 'uppercase',
+              }}
+            >
+              Total Gross Revenue
+            </div>
+            <div
+              style={{
+                fontSize: '20px',
+                fontWeight: '900',
+                color: '#ea580c',
+                marginTop: '3px',
+              }}
+            >
+              ₹
+              {totalRevenue.toLocaleString('en-IN', {
+                minimumFractionDigits: 2,
+              })}
+            </div>
+          </div>
+
+          <div
+            style={{
+              border: '1px solid #e5e7eb',
+              borderRadius: '8px',
+              padding: '12px 14px',
+              backgroundColor: '#f9fafb',
+            }}
+          >
+            <div
+              style={{
+                fontSize: '11px',
+                fontWeight: '700',
+                color: '#4b5563',
+                textTransform: 'uppercase',
+              }}
+            >
+              Total Bills Issued
+            </div>
+            <div
+              style={{
+                fontSize: '20px',
+                fontWeight: '900',
+                color: '#111827',
+                marginTop: '3px',
+              }}
+            >
+              {totalBills}
+            </div>
+          </div>
+
+          <div
+            style={{
+              border: '1px solid #e5e7eb',
+              borderRadius: '8px',
+              padding: '12px 14px',
+              backgroundColor: '#f9fafb',
+            }}
+          >
+            <div
+              style={{
+                fontSize: '11px',
+                fontWeight: '700',
+                color: '#4b5563',
+                textTransform: 'uppercase',
+              }}
+            >
+              Unique Customers
+            </div>
+            <div
+              style={{
+                fontSize: '20px',
+                fontWeight: '900',
+                color: '#111827',
+                marginTop: '3px',
+              }}
+            >
+              {uniqueCustomersCount}
+            </div>
+          </div>
+
+          <div
+            style={{
+              border: '1px solid #e5e7eb',
+              borderRadius: '8px',
+              padding: '12px 14px',
+              backgroundColor: '#f9fafb',
+            }}
+          >
+            <div
+              style={{
+                fontSize: '11px',
+                fontWeight: '700',
+                color: '#4b5563',
+                textTransform: 'uppercase',
+              }}
+            >
+              Avg. Invoice Value
+            </div>
+            <div
+              style={{
+                fontSize: '20px',
+                fontWeight: '900',
+                color: '#111827',
+                marginTop: '3px',
+              }}
+            >
+              ₹
+              {avgBillValue.toLocaleString('en-IN', {
+                minimumFractionDigits: 0,
+              })}
+            </div>
+          </div>
+        </div>
+
+        {/* Transactions Table */}
+        <table
+          style={{
+            width: '100%',
+            borderCollapse: 'collapse',
+            marginBottom: '18px',
+            tableLayout: 'fixed',
+          }}
+        >
+          <thead>
+            <tr
+              style={{
+                backgroundColor: '#e5e7eb',
+                borderTop: '2px solid #1f2937',
+                borderBottom: '2px solid #1f2937',
+                fontSize: '12px',
+                fontWeight: '800',
+                color: '#111827',
+                textTransform: 'uppercase',
+              }}
+            >
+              <th
+                style={{
+                  width: '7%',
+                  padding: '9px 6px',
+                  textAlign: 'center',
+                  borderRight: '1px solid #9ca3af',
+                }}
+              >
+                Sr
+              </th>
+              <th
+                style={{
+                  width: '13%',
+                  padding: '9px 8px',
+                  textAlign: 'center',
+                  borderRight: '1px solid #9ca3af',
+                }}
+              >
+                Date
+              </th>
+              <th
+                style={{
+                  width: '15%',
+                  padding: '9px 8px',
+                  textAlign: 'center',
+                  borderRight: '1px solid #9ca3af',
+                }}
+              >
+                Bill ID
+              </th>
+              <th
+                style={{
+                  width: '23%',
+                  padding: '9px 10px',
+                  textAlign: 'left',
+                  borderRight: '1px solid #9ca3af',
+                }}
+              >
+                Customer Name &amp; Phone
+              </th>
+              <th
+                style={{
+                  width: '27%',
+                  padding: '9px 10px',
+                  textAlign: 'left',
+                  borderRight: '1px solid #9ca3af',
+                }}
+              >
+                Items / Work Done
+              </th>
+              <th
+                style={{
+                  width: '15%',
+                  padding: '9px 10px',
+                  textAlign: 'right',
+                }}
+              >
+                Total (₹)
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {filteredInvoices.map((inv, idx) => {
+              const itemsList = inv.items
+                .map((it) => `${it.description} (${it.qty})`)
+                .join(', ')
+
+              return (
+                <tr
+                  key={idx}
+                  style={{
+                    borderBottom: '1px solid #d1d5db',
+                    fontSize: '12px',
+                    color: '#1f2937',
+                  }}
+                >
+                  <td
+                    style={{
+                      padding: '8px 6px',
+                      textAlign: 'center',
+                      fontWeight: '700',
+                      borderRight: '1px solid #e5e7eb',
+                    }}
+                  >
+                    {idx + 1}
+                  </td>
+                  <td
+                    style={{
+                      padding: '8px 8px',
+                      textAlign: 'center',
+                      fontWeight: '600',
+                      borderRight: '1px solid #e5e7eb',
+                    }}
+                  >
+                    {inv.date}
+                  </td>
+                  <td
+                    style={{
+                      padding: '8px 8px',
+                      textAlign: 'center',
+                      fontWeight: '700',
+                      color: '#0369a1',
+                      borderRight: '1px solid #e5e7eb',
+                    }}
+                  >
+                    {inv.id}
+                  </td>
+                  <td
+                    style={{
+                      padding: '8px 10px',
+                      textAlign: 'left',
+                      fontWeight: '700',
+                      borderRight: '1px solid #e5e7eb',
+                    }}
+                  >
+                    <div>{inv.customerName}</div>
+                    <div style={{ fontSize: '10px', color: '#6b7280', fontWeight: '500' }}>
+                      {inv.customerMobile || 'No phone'}
+                    </div>
+                  </td>
+                  <td
+                    style={{
+                      padding: '8px 10px',
+                      textAlign: 'left',
+                      borderRight: '1px solid #e5e7eb',
+                      wordBreak: 'break-word',
+                      fontSize: '11px',
+                      color: '#4b5563',
+                    }}
+                  >
+                    {itemsList || 'Radium Artwork'}
+                  </td>
+                  <td
+                    style={{
+                      padding: '8px 10px',
+                      textAlign: 'right',
+                      fontWeight: '800',
+                      color: '#111827',
+                    }}
+                  >
+                    ₹
+                    {Number(inv.grandTotal).toLocaleString('en-IN', {
+                      minimumFractionDigits: 2,
+                    })}
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+          <tfoot>
+            <tr
+              style={{
+                backgroundColor: '#f3f4f6',
+                borderTop: '2px solid #1f2937',
+                borderBottom: '2px solid #1f2937',
+              }}
+            >
+              <td
+                colSpan={5}
+                style={{
+                  padding: '11px 14px',
+                  fontWeight: '800',
+                  fontSize: '13px',
+                  textAlign: 'right',
+                  textTransform: 'uppercase',
+                  borderRight: '1px solid #d1d5db',
+                  color: '#374151',
+                }}
+              >
+                Total Period Revenue:
+              </td>
+              <td
+                style={{
+                  padding: '11px 14px',
+                  textAlign: 'right',
+                  fontWeight: '900',
+                  fontSize: '17px',
+                  color: '#ea580c',
+                }}
+              >
+                ₹
+                {totalRevenue.toLocaleString('en-IN', {
+                  minimumFractionDigits: 2,
+                  maximumFractionDigits: 2,
+                })}
+              </td>
+            </tr>
+          </tfoot>
+        </table>
+
+        {/* Footer */}
+        <div
+          style={{
+            marginTop: '24px',
+            paddingTop: '14px',
+            borderTop: '1px dashed #9ca3af',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'flex-end',
+            fontSize: '11px',
+            color: '#4b5563',
+          }}
+        >
+          <div>
+            <p style={{ fontWeight: '800', color: '#111827', margin: '0 0 2px 0' }}>
+              Jay Mataji Redium Art &amp; Truck Show Fitting
+            </p>
+            <p style={{ margin: '0 0 2px 0' }}>
+              Official Business Intelligence &amp; Revenue Ledger Statement
+            </p>
+            <p style={{ margin: 0, color: '#ea580c', fontWeight: '700' }}>
+              Generated on {new Date().toLocaleString('en-GB')}
+            </p>
+          </div>
+
+          <div style={{ textAlign: 'center', width: '180px' }}>
+            <div style={{ height: '35px' }}></div>
+            <div
+              style={{
+                borderTop: '1px solid #1f2937',
+                paddingTop: '4px',
+                fontWeight: '700',
+                color: '#111827',
+              }}
+            >
+              Authorized Signatory
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* =========================================================================
+          2. INTERACTIVE MODAL DIALOG (ON SCREEN)
+         ========================================================================= */}
+      <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-2 sm:p-4 overflow-y-auto">
+        <div className="bg-white rounded-3xl shadow-2xl max-w-5xl w-full my-auto flex flex-col max-h-[94vh] overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+          {/* Top Bar */}
+          <div className="p-4 sm:p-5 border-b flex flex-wrap justify-between items-center bg-gradient-to-r from-orange-50 to-amber-50 gap-3">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 rounded-xl overflow-hidden bg-black flex items-center justify-center p-1 border border-primary/20 shadow-sm flex-shrink-0">
+                <img
+                  src="/images/logo.png"
+                  alt="Logo"
+                  className="w-full h-full object-contain"
+                />
+              </div>
+              <div>
+                <h2 className="text-lg sm:text-xl font-extrabold text-gray-900 leading-tight">
+                  Full Shop Business &amp; Sales Report
+                </h2>
+                <p className="text-xs text-primary font-bold uppercase tracking-wider">
+                  Jay Mataji Redium Art • {scopeLabel}
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleShareWhatsApp}
+                disabled={pdfLoading}
+                className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs sm:text-sm font-bold transition flex items-center gap-1.5 shadow-sm disabled:opacity-50"
+              >
+                <span>📲</span>
+                <span>{pdfLoading ? 'Preparing...' : 'Share Summary'}</span>
+              </button>
+
+              <button
+                onClick={handleDownloadPDF}
+                disabled={pdfLoading}
+                className="px-3.5 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs sm:text-sm font-bold transition flex items-center gap-1.5 shadow-sm disabled:opacity-50"
+              >
+                <span>📥</span>
+                <span>{pdfLoading ? 'Generating...' : 'Download PDF Report'}</span>
+              </button>
+
+              <button
+                onClick={onClose}
+                className="text-gray-400 hover:text-gray-600 text-2xl font-bold px-2 py-1 leading-none ml-1"
+                title="Close"
+              >
+                ✕
+              </button>
+            </div>
+          </div>
+
+          {shareNotice && (
+            <div className="m-4 mb-0 p-3 bg-emerald-50 border border-emerald-200 text-emerald-800 text-sm rounded-xl flex items-center justify-between">
+              <span>{shareNotice}</span>
+              <button
+                onClick={() => setShareNotice(null)}
+                className="text-emerald-700 hover:text-emerald-900 font-bold ml-2"
+              >
+                ×
+              </button>
+            </div>
+          )}
+
+          {/* Controls: Time Period Filter Tabs */}
+          <div className="p-4 bg-gray-50 border-b flex flex-wrap items-center gap-2">
+            <span className="text-xs font-bold uppercase text-gray-500 mr-1">
+              Select Period:
+            </span>
+
+            <button
+              onClick={() => setPeriod('lifetime')}
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition ${
+                period === 'lifetime'
+                  ? 'bg-primary text-white shadow-sm'
+                  : 'bg-white text-gray-700 hover:bg-gray-100 border border-gray-200'
+              }`}
+            >
+              🌟 Lifetime (All Time)
+            </button>
+
+            <button
+              onClick={() => setPeriod('today')}
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition ${
+                period === 'today'
+                  ? 'bg-primary text-white shadow-sm'
+                  : 'bg-white text-gray-700 hover:bg-gray-100 border border-gray-200'
+              }`}
+            >
+              📅 Today
+            </button>
+
+            <button
+              onClick={() => setPeriod('this_week')}
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition ${
+                period === 'this_week'
+                  ? 'bg-primary text-white shadow-sm'
+                  : 'bg-white text-gray-700 hover:bg-gray-100 border border-gray-200'
+              }`}
+            >
+              📆 Past 7 Days
+            </button>
+
+            <button
+              onClick={() => setPeriod('this_month')}
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition ${
+                period === 'this_month'
+                  ? 'bg-primary text-white shadow-sm'
+                  : 'bg-white text-gray-700 hover:bg-gray-100 border border-gray-200'
+              }`}
+            >
+              🗓️ This Month
+            </button>
+
+            <button
+              onClick={() => setPeriod('this_year')}
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition ${
+                period === 'this_year'
+                  ? 'bg-primary text-white shadow-sm'
+                  : 'bg-white text-gray-700 hover:bg-gray-100 border border-gray-200'
+              }`}
+            >
+              📊 This Year
+            </button>
+
+            <button
+              onClick={() => setPeriod('custom')}
+              className={`px-3.5 py-1.5 rounded-lg text-xs font-bold transition ${
+                period === 'custom'
+                  ? 'bg-primary text-white shadow-sm'
+                  : 'bg-white text-gray-700 hover:bg-gray-100 border border-gray-200'
+              }`}
+            >
+              ⚙️ Custom Date Range
+            </button>
+
+            {period === 'custom' && (
+              <div className="flex items-center gap-2 mt-2 sm:mt-0 ml-auto bg-white px-3 py-1 rounded-lg border border-gray-200">
+                <span className="text-xs font-bold text-gray-600">From:</span>
+                <input
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                  className="text-xs border rounded px-2 py-0.5"
+                />
+                <span className="text-xs font-bold text-gray-600">To:</span>
+                <input
+                  type="date"
+                  value={endDate}
+                  onChange={(e) => setEndDate(e.target.value)}
+                  className="text-xs border rounded px-2 py-0.5"
+                />
+              </div>
+            )}
+          </div>
+
+          {/* Main Body */}
+          <div className="p-5 sm:p-6 overflow-y-auto flex-1 space-y-6">
+            {/* KPI Banner */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5">
+              <div className="p-4 rounded-2xl bg-orange-50/90 border border-orange-200">
+                <span className="text-[11px] font-bold uppercase text-orange-700 tracking-wider block">
+                  Total Gross Revenue
+                </span>
+                <span className="text-xl sm:text-2xl font-black text-orange-600 mt-1 block">
+                  ₹
+                  {totalRevenue.toLocaleString('en-IN', {
+                    minimumFractionDigits: 2,
+                  })}
+                </span>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-blue-50/90 border border-blue-200">
+                <span className="text-[11px] font-bold uppercase text-blue-700 tracking-wider block">
+                  Total Invoices Issued
+                </span>
+                <span className="text-xl sm:text-2xl font-black text-blue-950 mt-1 block">
+                  {totalBills} bills
+                </span>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-emerald-50/90 border border-emerald-200">
+                <span className="text-[11px] font-bold uppercase text-emerald-700 tracking-wider block">
+                  Unique Customers
+                </span>
+                <span className="text-xl sm:text-2xl font-black text-emerald-900 mt-1 block">
+                  {uniqueCustomersCount} clients
+                </span>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-purple-50/90 border border-purple-200">
+                <span className="text-[11px] font-bold uppercase text-purple-700 tracking-wider block">
+                  Avg. Invoice Value
+                </span>
+                <span className="text-xl sm:text-2xl font-black text-purple-950 mt-1 block">
+                  ₹
+                  {avgBillValue.toLocaleString('en-IN', {
+                    minimumFractionDigits: 0,
+                  })}
+                </span>
+              </div>
+            </div>
+
+            {/* Top Performing Services / Items */}
+            {topItems.length > 0 && (
+              <div className="bg-gray-50 p-4 rounded-2xl border border-gray-200">
+                <h4 className="text-xs font-extrabold uppercase tracking-wider text-gray-700 mb-3 flex items-center gap-1.5">
+                  <span>🏆</span> Top Revenue Works in this Period
+                </h4>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  {topItems.slice(0, 3).map((item, idx) => (
+                    <div
+                      key={idx}
+                      className="bg-white p-3 rounded-xl border border-gray-200 flex justify-between items-center"
+                    >
+                      <div className="overflow-hidden pr-2">
+                        <p className="text-xs font-bold text-gray-900 truncate">
+                          {item.name}
+                        </p>
+                        <p className="text-[11px] text-gray-500">
+                          Qty: {item.count} units
+                        </p>
+                      </div>
+                      <span className="text-xs font-black text-primary whitespace-nowrap">
+                        ₹{item.revenue.toLocaleString('en-IN')}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Transaction Ledger Table */}
+            <div>
+              <h4 className="text-sm font-extrabold uppercase tracking-wider text-gray-700 mb-3 flex items-center justify-between">
+                <span className="flex items-center gap-2">
+                  <span>📋</span> Detailed Sales Ledger ({filteredInvoices.length} Bills)
+                </span>
+                <span className="text-xs font-semibold text-gray-500 lowercase">
+                  sorted by date descending
+                </span>
+              </h4>
+
+              <div className="border border-gray-200 rounded-2xl overflow-hidden shadow-sm">
+                <table className="w-full text-xs sm:text-sm text-left border-collapse">
+                  <thead>
+                    <tr className="bg-gray-100 border-b border-gray-200 text-gray-700 font-bold uppercase text-[11px]">
+                      <th className="py-3 px-3 w-12 text-center">#</th>
+                      <th className="py-3 px-3 w-28 text-center">Date</th>
+                      <th className="py-3 px-3 w-28 text-center">Bill ID</th>
+                      <th className="py-3 px-4 w-44">Customer</th>
+                      <th className="py-3 px-4">Work / Items</th>
+                      <th className="py-3 px-4 w-32 text-right">Amount (₹)</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {filteredInvoices.length === 0 ? (
+                      <tr>
+                        <td
+                          colSpan={6}
+                          className="py-12 text-center text-gray-400 font-medium"
+                        >
+                          No sales recorded in this period.
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredInvoices.map((inv, idx) => (
+                        <tr
+                          key={inv.id}
+                          className="hover:bg-gray-50/70 transition"
+                        >
+                          <td className="py-3 px-3 text-center font-bold text-gray-500">
+                            {idx + 1}
+                          </td>
+                          <td className="py-3 px-3 text-center font-semibold text-gray-700">
+                            {inv.date}
+                          </td>
+                          <td className="py-3 px-3 text-center">
+                            <span className="px-2.5 py-1 bg-sky-100 text-sky-800 rounded-md font-bold text-xs">
+                              {inv.id}
+                            </span>
+                          </td>
+                          <td className="py-3 px-4">
+                            <p className="font-bold text-gray-900">
+                              {inv.customerName}
+                            </p>
+                            <p className="text-[11px] text-gray-500">
+                              {inv.customerMobile || 'No phone'}
+                            </p>
+                          </td>
+                          <td className="py-3 px-4 text-gray-700">
+                            <div className="line-clamp-2">
+                              {inv.items
+                                .map((it) => `${it.description} (${it.qty})`)
+                                .join(', ')}
+                            </div>
+                          </td>
+                          <td className="py-3 px-4 text-right font-black text-gray-900 text-sm">
+                            ₹
+                            {inv.grandTotal.toLocaleString('en-IN', {
+                              minimumFractionDigits: 2,
+                            })}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                  <tfoot>
+                    <tr className="bg-orange-50 font-bold border-t-2 border-orange-200">
+                      <td
+                        colSpan={5}
+                        className="py-3 px-4 text-right text-xs uppercase tracking-wider text-orange-900 font-extrabold"
+                      >
+                        Total Period Revenue:
+                      </td>
+                      <td className="py-3 px-4 text-right text-base font-black text-orange-600">
+                        ₹
+                        {totalRevenue.toLocaleString('en-IN', {
+                          minimumFractionDigits: 2,
+                        })}
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            </div>
+          </div>
+
+          {/* Footer Bar */}
+          <div className="p-4 border-t bg-gray-50 flex justify-end gap-2.5">
+            <button
+              onClick={onClose}
+              className="px-5 py-2.5 bg-gray-200 hover:bg-gray-300 text-gray-700 rounded-xl font-bold text-sm transition"
+            >
+              Close
+            </button>
+            <button
+              onClick={handleDownloadPDF}
+              disabled={pdfLoading}
+              className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-sm transition shadow-sm flex items-center gap-2"
+            >
+              <span>📥</span>
+              <span>{pdfLoading ? 'Generating...' : 'Download Shop Report (PDF)'}</span>
+            </button>
+          </div>
+        </div>
+      </div>
+    </>
+  )
+}
+
