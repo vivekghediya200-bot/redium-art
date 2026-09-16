@@ -14,12 +14,31 @@ function checkAuth(request: NextRequest) {
   return verifyToken(token)
 }
 
-// Public GET for gallery items
-export async function GET() {
+// Public GET for gallery items with pagination and CDN edge caching
+export async function GET(request: NextRequest) {
   try {
     await initializeDatabase()
     const images = getAllGalleryImages()
-    return NextResponse.json(images)
+
+    const { searchParams } = new URL(request.url)
+    const limitParam = searchParams.get('limit')
+    const pageParam = searchParams.get('page')
+
+    let result = images
+    if (limitParam) {
+      const limit = parseInt(limitParam, 10)
+      const page = pageParam ? parseInt(pageParam, 10) : 1
+      const start = (page - 1) * limit
+      result = images.slice(start, start + limit)
+    }
+
+    return new NextResponse(JSON.stringify(result), {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/json',
+        'Cache-Control': 'public, s-maxage=1800, stale-while-revalidate=86400',
+      },
+    })
   } catch (error) {
     console.error('Error fetching gallery images:', error)
     return NextResponse.json(

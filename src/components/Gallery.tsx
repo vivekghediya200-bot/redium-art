@@ -20,10 +20,32 @@ export default function Gallery() {
   const fetchGallery = async () => {
     try {
       setLoading(true)
-      const response = await fetch('/api/gallery')
+      // 1. Fetch first 15 images for instantaneous (<300ms) initial render
+      const response = await fetch('/api/gallery?limit=15&page=1')
       if (response.ok) {
         const data = await response.json()
-        setItems(data)
+        if (Array.isArray(data) && data.length > 0) {
+          setItems(data)
+          setLoading(false)
+
+          // 2. Fetch remaining images smoothly in the background without UI delay
+          fetch('/api/gallery')
+            .then((res) => (res.ok ? res.json() : []))
+            .then((allData) => {
+              if (Array.isArray(allData) && allData.length > data.length) {
+                setItems(allData)
+              }
+            })
+            .catch(() => {})
+          return
+        }
+      }
+
+      // Fallback if limit param wasn't returned
+      const fallback = await fetch('/api/gallery')
+      if (fallback.ok) {
+        const full = await fallback.json()
+        setItems(full)
       }
     } catch (error) {
       console.error('Error fetching gallery:', error)

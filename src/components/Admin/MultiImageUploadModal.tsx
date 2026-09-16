@@ -7,6 +7,44 @@ interface MultiImageUploadModalProps {
   onSuccess: () => void
 }
 
+async function compressImageFile(file: File, maxDim = 1200, quality = 0.75): Promise<Blob> {
+  return new Promise((resolve) => {
+    const reader = new FileReader()
+    reader.onload = (e) => {
+      const img = new Image()
+      img.onload = () => {
+        let width = img.width
+        let height = img.height
+        if (width > maxDim || height > maxDim) {
+          if (width > height) {
+            height = Math.round((height * maxDim) / width)
+            width = maxDim
+          } else {
+            width = Math.round((width * maxDim) / height)
+            height = maxDim
+          }
+        }
+        const canvas = document.createElement('canvas')
+        canvas.width = width
+        canvas.height = height
+        const ctx = canvas.getContext('2d')
+        ctx?.drawImage(img, 0, 0, width, height)
+        canvas.toBlob(
+          (blob) => {
+            resolve(blob || file)
+          },
+          'image/jpeg',
+          quality
+        )
+      }
+      img.onerror = () => resolve(file)
+      img.src = e.target?.result as string
+    }
+    reader.onerror = () => resolve(file)
+    reader.readAsDataURL(file)
+  })
+}
+
 export default function MultiImageUploadModal({
   onClose,
   onSuccess,
@@ -60,12 +98,12 @@ export default function MultiImageUploadModal({
     setLoading(true)
     setError(null)
 
-    const formData = new FormData()
-    selectedFiles.forEach((file) => {
-      formData.append('images', file)
-    })
-
     try {
+      const formData = new FormData()
+      for (const file of selectedFiles) {
+        const compressedBlob = await compressImageFile(file, 1200, 0.75)
+        formData.append('images', compressedBlob, file.name)
+      }
       const token = localStorage.getItem('adminToken')
       const response = await fetch('/api/gallery', {
         method: 'POST',
