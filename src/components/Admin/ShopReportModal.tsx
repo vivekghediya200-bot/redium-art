@@ -12,6 +12,41 @@ interface ShopReportModalProps {
 
 type PeriodFilter = 'lifetime' | 'today' | 'this_week' | 'this_month' | 'this_year' | 'custom'
 
+async function saveOrDownloadBlob(blob: Blob, suggestedName: string): Promise<boolean> {
+  if (typeof window !== 'undefined' && 'showSaveFilePicker' in window) {
+    try {
+      const handle = await (window as any).showSaveFilePicker({
+        suggestedName,
+        types: [
+          {
+            description: 'PDF Document (*.pdf)',
+            accept: { 'application/pdf': ['.pdf'] },
+          },
+        ],
+      })
+      const writable = await handle.createWritable()
+      await writable.write(blob)
+      await writable.close()
+      return true
+    } catch (err: any) {
+      if (err.name === 'AbortError') {
+        return false
+      }
+      console.warn('showSaveFilePicker failed or cancelled, falling back to download:', err)
+    }
+  }
+
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = suggestedName
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+  return true
+}
+
 export default function ShopReportModal({
   customers,
   onClose,
@@ -294,8 +329,8 @@ export default function ShopReportModal({
       const fileName = `JayMataji_ShopReport_${period}_${new Date()
         .toISOString()
         .split('T')[0]}.pdf`
-      pdf.save(fileName)
       const blob = pdf.output('blob')
+      await saveOrDownloadBlob(blob, fileName)
       return { fileName, blob }
     } catch (err) {
       console.error('Shop report PDF generation error:', err)
@@ -307,6 +342,16 @@ export default function ShopReportModal({
 
   // Share via WhatsApp with executive summary and automatic PDF download
   const handleShareWhatsApp = async () => {
+    let savedFileName = ''
+    try {
+      const result = await handleDownloadPDF()
+      if (result) {
+        savedFileName = result.fileName
+      }
+    } catch (pdfErr) {
+      console.error('Shop report PDF error during share:', pdfErr)
+    }
+
     const message = `📊 *JAY MATAJI REDIUM ART - BUSINESS PERFORMANCE REPORT*
 *Scope:* ${scopeLabel}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -322,21 +367,18 @@ ${bestClients.length > 0 ? `⭐ *Top Client:* ${bestClients[0].name} (₹${bestC
 📍 Porbandar Khambhaliya highway bokhira, Near Vachhrajdada Temple, Porbandar 360575
 📞 Contact: 6353016927
 
-📄 _Your official Business Performance Report PDF has been downloaded to your device._`
+📄 _Official Business Performance Report PDF has been saved to your selected folder._`
 
-    const waUrl = `https://wa.me/?text=${encodeURIComponent(message)}`
-    window.open(waUrl, '_blank')
+    const waAppUrl = `whatsapp://send?text=${encodeURIComponent(message)}`
+    const waLink = document.createElement('a')
+    waLink.href = waAppUrl
+    document.body.appendChild(waLink)
+    waLink.click()
+    document.body.removeChild(waLink)
 
-    try {
-      const result = await handleDownloadPDF()
-      if (result) {
-        setShareNotice(`✅ Report downloaded as "${result.fileName}"! WhatsApp opened with executive summary.`)
-      } else {
-        setShareNotice(`✅ WhatsApp opened with executive business summary!`)
-      }
-    } catch (e) {
-      setShareNotice(`✅ WhatsApp opened with executive business summary!`)
-    }
+    setShareNotice(
+      `✅ Report ${savedFileName ? `"${savedFileName}"` : ''} saved to your folder! WhatsApp Application opened with executive summary.`
+    )
   }
 
   return (
@@ -953,7 +995,13 @@ ${bestClients.length > 0 ? `⭐ *Top Client:* ${bestClients[0].name} (₹${bestC
           </div>
 
           <div style={{ textAlign: 'center', width: '180px' }}>
-            <div style={{ height: '35px' }}></div>
+            <div style={{ height: '50px', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', paddingBottom: '2px' }}>
+              <img
+                src="/images/signature.png"
+                alt="Authorized Signatory"
+                style={{ maxHeight: '46px', maxWidth: '145px', objectFit: 'contain' }}
+              />
+            </div>
             <div
               style={{
                 borderTop: '1px solid #1f2937',

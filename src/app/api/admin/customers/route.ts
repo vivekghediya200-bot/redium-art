@@ -57,10 +57,41 @@ export async function GET(request: NextRequest) {
         )
       : enriched
 
-    // Sort customers by last visit date descending
-    filtered.sort(
-      (a, b) => new Date(b.lastVisit).getTime() - new Date(a.lastVisit).getTime()
-    )
+    if (query) {
+      filtered.sort((a, b) => {
+        const aName = (a.name || '').toLowerCase()
+        const bName = (b.name || '').toLowerCase()
+
+        // 1. Exact name prefix match (e.g. 'vi' matches 'Vivek')
+        const aPrefix = aName.startsWith(query)
+        const bPrefix = bName.startsWith(query)
+        if (aPrefix && !bPrefix) return -1
+        if (!aPrefix && bPrefix) return 1
+
+        // 2. Word prefix match (e.g. 'vi' matches 'Patel Vivek')
+        const aWord = aName.split(/\s+/).some((w) => w.startsWith(query))
+        const bWord = bName.split(/\s+/).some((w) => w.startsWith(query))
+        if (aWord && !bWord) return -1
+        if (!aWord && bWord) return 1
+
+        // 3. Priority: highest total spent first (best customer priority)
+        if (b.totalSpent !== a.totalSpent) {
+          return b.totalSpent - a.totalSpent
+        }
+
+        // 4. Most visits
+        if (b.visitCount !== a.visitCount) {
+          return b.visitCount - a.visitCount
+        }
+
+        return new Date(b.lastVisit).getTime() - new Date(a.lastVisit).getTime()
+      })
+    } else {
+      // Sort customers by last visit date descending
+      filtered.sort(
+        (a, b) => new Date(b.lastVisit).getTime() - new Date(a.lastVisit).getTime()
+      )
+    }
 
     return NextResponse.json(filtered)
   } catch (error) {

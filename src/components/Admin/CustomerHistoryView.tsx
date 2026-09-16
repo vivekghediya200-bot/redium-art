@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import InvoiceModal from './InvoiceModal'
 import CustomerReportModal from './CustomerReportModal'
 import ShopReportModal from './ShopReportModal'
@@ -29,9 +29,12 @@ export interface CustomerData {
 
 export default function CustomerHistoryView() {
   const [customers, setCustomers] = useState<CustomerData[]>([])
+  const [allCustomers, setAllCustomers] = useState<CustomerData[]>([])
   const [searchQuery, setSearchQuery] = useState('')
+  const [isSearchFocused, setIsSearchFocused] = useState(false)
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [deleteLoading, setDeleteLoading] = useState<string | null>(null)
 
   // Modals state
   const [showInvoiceModal, setShowInvoiceModal] = useState(false)
@@ -43,8 +46,21 @@ export default function CustomerHistoryView() {
     mobile: string
   } | null>(null)
 
+  const searchBoxRef = useRef<HTMLDivElement>(null)
+
   useEffect(() => {
     fetchCustomers()
+  }, [])
+
+  // Close suggestions if clicked outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (searchBoxRef.current && !searchBoxRef.current.contains(e.target as Node)) {
+        setIsSearchFocused(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
   const fetchCustomers = async (query = '') => {
@@ -65,6 +81,9 @@ export default function CustomerHistoryView() {
       if (res.ok) {
         const data = await res.json()
         setCustomers(data)
+        if (!query) {
+          setAllCustomers(data)
+        }
         if (data.length > 0 && !selectedCustomerId) {
           setSelectedCustomerId(data[0].id)
         }
@@ -76,25 +95,105 @@ export default function CustomerHistoryView() {
     }
   }
 
+  // Live matching client suggestions prioritizing prefix and best clients
+  const liveSuggestions = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase()
+    if (!q) return []
+    const pool = allCustomers.length > 0 ? allCustomers : customers
+    return pool
+      .filter(
+        (c) =>
+          (c.name || '').toLowerCase().includes(q) ||
+          (c.mobile || '').toLowerCase().includes(q)
+      )
+      .sort((a, b) => {
+        const aName = (a.name || '').toLowerCase()
+        const bName = (b.name || '').toLowerCase()
+
+        // 1. Exact name prefix match (e.g. 'vi' matches 'Vivek')
+        const aExact = aName.startsWith(q)
+        const bExact = bName.startsWith(q)
+        if (aExact && !bExact) return -1
+        if (!aExact && bExact) return 1
+
+        // 2. Word prefix match
+        const aWord = aName.split(/\s+/).some((w) => w.startsWith(q))
+        const bWord = bName.split(/\s+/).some((w) => w.startsWith(q))
+        if (aWord && !bWord) return -1
+        if (!aWord && bWord) return 1
+
+        // 3. Priority: Highest lifetime spenders
+        if (b.totalSpent !== a.totalSpent) {
+          return b.totalSpent - a.totalSpent
+        }
+        return b.visitCount - a.visitCount
+      })
+      .slice(0, 6)
+  }, [searchQuery, allCustomers, customers])
+
+  const handleSelectSuggestion = (c: CustomerData) => {
+    setSearchQuery(c.name)
+    setSelectedCustomerId(c.id)
+    setIsSearchFocused(false)
+    fetchCustomers(c.name)
+  }
+
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault()
+    setIsSearchFocused(false)
     fetchCustomers(searchQuery)
   }
 
   const handleDeleteInvoice = async (invoiceId: string) => {
-    if (!confirm(`Are you sure you want to delete bill ${invoiceId}?`)) return
+    if (!confirm(`Are you sure you want to delete bill ${invoiceId}? This cannot be undone.`)) return
 
     try {
+      setDeleteLoading(invoiceId)
       const token = localStorage.getItem('adminToken')
       const res = await fetch(`/api/admin/invoices/${invoiceId}`, {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${token}` },
       })
       if (res.ok) {
+        // Optimistically remove invoice from UI
+        setCustomers((prev) =>
+          prev.map((cust) => {
+            const hasInv = cust.invoices.some((inv) => inv.id === invoiceId)
+            if (!hasInv) return cust
+            const updatedInvoices = cust.invoices.filter((inv) => inv.id !== invoiceId)
+            const updatedSpent = updatedInvoices.reduce((sum, inv) => sum + (inv.grandTotal || 0), 0)
+            return {
+              ...cust,
+              invoices: updatedInvoices,
+              visitCount: updatedInvoices.length,
+              totalSpent: updatedSpent,
+            }
+          })
+        )
+        setAllCustomers((prev) =>
+          prev.map((cust) => {
+            const hasInv = cust.invoices.some((inv) => inv.id === invoiceId)
+            if (!hasInv) return cust
+            const updatedInvoices = cust.invoices.filter((inv) => inv.id !== invoiceId)
+            const updatedSpent = updatedInvoices.reduce((sum, inv) => sum + (inv.grandTotal || 0), 0)
+            return {
+              ...cust,
+              invoices: updatedInvoices,
+              visitCount: updatedInvoices.length,
+              totalSpent: updatedSpent,
+            }
+          })
+        )
         fetchCustomers(searchQuery)
+      } else {
+        const errData = await res.json().catch(() => ({}))
+        alert(errData.message || 'Failed to delete invoice')
       }
     } catch (err) {
       console.error('Error deleting invoice:', err)
+      alert('Error occurred while deleting invoice')
+    } finally {
+      setDeleteLoading(null)
     }
   }
 
@@ -104,33 +203,88 @@ export default function CustomerHistoryView() {
     <div className="space-y-6">
       {/* Top Controls: Search & New Bill Button */}
       <div className="flex flex-col sm:flex-row justify-between items-stretch sm:items-center gap-4 bg-white p-4 rounded-xl shadow-sm border border-gray-200">
-        <form onSubmit={handleSearch} className="flex gap-2 flex-1 max-w-md">
-          <input
-            type="text"
-            placeholder="Search customer by name or phone..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="flex-1 px-4 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:border-primary"
-          />
-          <button
-            type="submit"
-            className="px-4 py-2 bg-gray-800 text-white text-sm font-semibold rounded-lg hover:bg-gray-900 transition"
-          >
-            Search
-          </button>
-          {searchQuery && (
+        <div ref={searchBoxRef} className="relative flex-1 max-w-md">
+          <form onSubmit={handleSearch} className="flex gap-2">
+            <div className="relative flex-1">
+              <span className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400">
+                🔍
+              </span>
+              <input
+                type="text"
+                placeholder="Search customer (e.g. type 'vi')..."
+                value={searchQuery}
+                onFocus={() => setIsSearchFocused(true)}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value)
+                  setIsSearchFocused(true)
+                }}
+                className="w-full pl-9 pr-4 py-2.5 text-sm border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary shadow-sm"
+              />
+            </div>
             <button
-              type="button"
-              onClick={() => {
-                setSearchQuery('')
-                fetchCustomers('')
-              }}
-              className="px-3 py-2 bg-gray-200 text-gray-700 text-sm rounded-lg hover:bg-gray-300"
+              type="submit"
+              className="px-4 py-2.5 bg-gray-900 hover:bg-black text-white text-sm font-bold rounded-xl transition shadow-sm"
             >
-              Clear
+              Search
             </button>
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchQuery('')
+                  setIsSearchFocused(false)
+                  fetchCustomers('')
+                }}
+                className="px-3 py-2.5 bg-gray-200 text-gray-700 text-sm font-semibold rounded-xl hover:bg-gray-300 transition"
+              >
+                Clear
+              </button>
+            )}
+          </form>
+
+          {/* Live Autocomplete Dropdown */}
+          {isSearchFocused && liveSuggestions.length > 0 && (
+            <div className="absolute left-0 right-0 top-full mt-1.5 bg-white rounded-xl shadow-2xl border border-orange-200 overflow-hidden z-50 divide-y divide-gray-100">
+              <div className="px-3 py-1.5 bg-orange-50/80 text-[11px] font-bold text-orange-900 flex justify-between items-center">
+                <span>Matching Clients (Prioritized)</span>
+                <span className="text-[10px] text-orange-700 font-normal">Click to open customer</span>
+              </div>
+              {liveSuggestions.map((sug) => {
+                const isTopSpender = sug.totalSpent >= 5000
+                return (
+                  <button
+                    key={sug.id}
+                    type="button"
+                    onClick={() => handleSelectSuggestion(sug)}
+                    className="w-full text-left px-4 py-2.5 hover:bg-orange-50 flex items-center justify-between gap-3 transition"
+                  >
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-bold text-gray-900 text-sm">
+                          {sug.name}
+                        </span>
+                        {isTopSpender && (
+                          <span className="px-1.5 py-0.5 bg-amber-100 text-amber-800 text-[10px] font-extrabold rounded">
+                            ⭐ Top Client
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-xs text-gray-500">
+                        📞 {sug.mobile || 'No phone'} • {sug.visitCount} visit{sug.visitCount !== 1 ? 's' : ''}
+                      </div>
+                    </div>
+                    <div className="text-right flex-shrink-0">
+                      <div className="text-xs font-black text-primary">
+                        ₹{sug.totalSpent.toLocaleString('en-IN')}
+                      </div>
+                      <div className="text-[10px] text-gray-400">Total Spent</div>
+                    </div>
+                  </button>
+                )
+              })}
+            </div>
           )}
-        </form>
+        </div>
 
         <div className="flex items-center gap-2.5 flex-wrap sm:flex-nowrap">
           <button
@@ -336,9 +490,10 @@ export default function CustomerHistoryView() {
                             </button>
                             <button
                               onClick={() => handleDeleteInvoice(inv.id)}
-                              className="px-2.5 py-1 bg-red-50 hover:bg-red-100 text-red-700 text-xs font-semibold rounded border border-red-200 transition"
+                              disabled={deleteLoading === inv.id}
+                              className="px-2.5 py-1 bg-red-50 hover:bg-red-100 text-red-700 text-xs font-semibold rounded border border-red-200 transition disabled:opacity-50"
                             >
-                              Delete
+                              {deleteLoading === inv.id ? 'Deleting...' : 'Delete'}
                             </button>
                           </div>
                         </div>

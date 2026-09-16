@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useMemo } from 'react'
 import html2canvas from 'html2canvas'
 import { jsPDF } from 'jspdf'
 
@@ -20,6 +20,41 @@ interface InvoiceModalProps {
   onSuccess: () => void
 }
 
+async function saveOrDownloadBlob(blob: Blob, suggestedName: string): Promise<boolean> {
+  if (typeof window !== 'undefined' && 'showSaveFilePicker' in window) {
+    try {
+      const handle = await (window as any).showSaveFilePicker({
+        suggestedName,
+        types: [
+          {
+            description: 'PDF Document (*.pdf)',
+            accept: { 'application/pdf': ['.pdf'] },
+          },
+        ],
+      })
+      const writable = await handle.createWritable()
+      await writable.write(blob)
+      await writable.close()
+      return true
+    } catch (err: any) {
+      if (err.name === 'AbortError') {
+        return false
+      }
+      console.warn('showSaveFilePicker failed or cancelled, falling back to download:', err)
+    }
+  }
+
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = suggestedName
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+  return true
+}
+
 export default function InvoiceModal({
   initialCustomerName = '',
   initialCustomerMobile = '',
@@ -33,6 +68,12 @@ export default function InvoiceModal({
   const [customerMobile, setCustomerMobile] = useState(
     existingInvoice ? existingInvoice.customerMobile : initialCustomerMobile
   )
+  const [knownCustomers, setKnownCustomers] = useState<
+    Array<{ name: string; mobile: string; totalSpent: number }>
+  >([])
+  const [isNameFocused, setIsNameFocused] = useState(false)
+  const customerInputRef = useRef<HTMLDivElement>(null)
+
   const [date, setDate] = useState(
     existingInvoice
       ? existingInvoice.date
@@ -53,6 +94,65 @@ export default function InvoiceModal({
   const [shareNotice, setShareNotice] = useState<string | null>(null)
 
   const pdfTemplateRef = useRef<HTMLDivElement>(null)
+
+  // Fetch customers for fast autocomplete in customer name field
+  useEffect(() => {
+    const fetchKnown = async () => {
+      try {
+        const token = localStorage.getItem('adminToken')
+        const res = await fetch('/api/admin/customers', {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        if (res.ok) {
+          const data = await res.json()
+          setKnownCustomers(
+            data.map((c: any) => ({
+              name: c.name || '',
+              mobile: c.mobile || '',
+              totalSpent: c.totalSpent || 0,
+            }))
+          )
+        }
+      } catch (err) {
+        console.error('Error loading customers for autocomplete:', err)
+      }
+    }
+    fetchKnown()
+  }, [])
+
+  // Close customer name suggestions on outside click
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (
+        customerInputRef.current &&
+        !customerInputRef.current.contains(e.target as Node)
+      ) {
+        setIsNameFocused(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
+  // Dynamic suggestions matching typed text (e.g. 'vi')
+  const nameSuggestions = useMemo(() => {
+    const q = customerName.trim().toLowerCase()
+    if (!q || existingInvoice) return []
+    return knownCustomers
+      .filter(
+        (c) =>
+          (c.name || '').toLowerCase().includes(q) ||
+          (c.mobile || '').includes(q)
+      )
+      .sort((a, b) => {
+        const aExact = a.name.toLowerCase().startsWith(q)
+        const bExact = b.name.toLowerCase().startsWith(q)
+        if (aExact && !bExact) return -1
+        if (!aExact && bExact) return 1
+        return b.totalSpent - a.totalSpent
+      })
+      .slice(0, 5)
+  }, [customerName, knownCustomers, existingInvoice])
 
   // Sync state if existingInvoice changes
   useEffect(() => {
@@ -241,8 +341,8 @@ export default function InvoiceModal({
       )
       const fileName = `${billId}_${cleanName}.pdf`
 
-      pdf.save(fileName)
       const blob = pdf.output('blob')
+      await saveOrDownloadBlob(blob, fileName)
       return { fileName, blob }
     } catch (err: any) {
       console.error('PDF generation error:', err)
@@ -253,7 +353,7 @@ export default function InvoiceModal({
     }
   }
 
-  // Share Directly to WhatsApp with pre-filled manual bill & automatic PDF download
+  // Share Directly to WhatsApp with pre-filled manual bill & selected folder PDF save
   const handleShareWhatsApp = async () => {
     if (!customerName.trim()) {
       setError('Please provide customer name')
@@ -262,7 +362,18 @@ export default function InvoiceModal({
 
     setShareNotice(null)
 
-    // Format detailed manual bill text for WhatsApp
+    // 1. Prompt folder selector and save PDF first!
+    let savedPdfName = ''
+    try {
+      const result = await handleDownloadPDF()
+      if (result) {
+        savedPdfName = result.fileName
+      }
+    } catch (pdfErr) {
+      console.error('Error generating PDF for WhatsApp share:', pdfErr)
+    }
+
+    // 2. Format detailed manual bill text for WhatsApp
     const billId = existingInvoice?.id || 'NEW_BILL'
     const validItems = items.filter(
       (it) => it.description && it.description.trim() !== ''
@@ -294,35 +405,48 @@ ${itemsText || '1. Redium Artwork & Vehicle Fitting Services - ₹' + grandTotal
     })}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
 🙏 *Thank you for choosing Jay Mataji Redium Art!*
-📄 _Your official PDF invoice has been generated & downloaded to your device._`
+📄 _Your official PDF invoice has been saved to your selected folder._`
 
     let phone = (customerMobile || '').replace(/\D/g, '')
     if (phone.length === 10) {
       phone = '91' + phone
     }
 
-    const waUrl = phone
-      ? `https://wa.me/${phone}?text=${encodeURIComponent(message)}`
-      : `https://wa.me/?text=${encodeURIComponent(message)}`
-
-    // Open WhatsApp directly
-    window.open(waUrl, '_blank')
-
-    // Automatically generate and download PDF to user's device
+    // 3. Attempt to copy bill image to clipboard for instant Ctrl+V into WhatsApp
     try {
-      const result = await handleDownloadPDF()
-      if (result) {
-        setShareNotice(
-          `✅ PDF "${result.fileName}" downloaded! WhatsApp opened with your itemized bill for ${customerName}.`
-        )
-      } else {
-        setShareNotice(
-          `✅ WhatsApp opened with your itemized bill for ${customerName}!`
-        )
+      const element = document.getElementById('invoice-pdf-render-zone')
+      if (element && typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
+        const canvas = await html2canvas(element, { scale: 1.5, backgroundColor: '#ffffff', logging: false, width: 800 })
+        canvas.toBlob(async (imgBlob) => {
+          if (imgBlob) {
+            try {
+              await navigator.clipboard.write([
+                new ClipboardItem({ 'image/png': imgBlob })
+              ])
+            } catch (cErr) {
+              console.warn('Clipboard write error:', cErr)
+            }
+          }
+        }, 'image/png')
       }
     } catch (e) {
-      setShareNotice(`✅ WhatsApp opened with your itemized bill!`)
+      console.warn('Clipboard image preparation warning:', e)
     }
+
+    // 4. Open WhatsApp Application directly using whatsapp:// URI scheme
+    const waAppUrl = phone
+      ? `whatsapp://send?phone=${phone}&text=${encodeURIComponent(message)}`
+      : `whatsapp://send?text=${encodeURIComponent(message)}`
+
+    const waLink = document.createElement('a')
+    waLink.href = waAppUrl
+    document.body.appendChild(waLink)
+    waLink.click()
+    document.body.removeChild(waLink)
+
+    setShareNotice(
+      `✅ PDF ${savedPdfName ? `"${savedPdfName}"` : ''} saved to your selected folder! WhatsApp Application opened. In WhatsApp, press Ctrl+V to send the bill image, or attach the saved PDF!`
+    )
   }
 
   const handleSave = async () => {
@@ -343,9 +467,21 @@ ${itemsText || '1. Redium Artwork & Vehicle Fitting Services - ₹' + grandTotal
       setLoading(true)
       setError(null)
       const token = localStorage.getItem('adminToken')
+      if (!token) {
+        setError('Admin session expired. Please log in again.')
+        setTimeout(() => {
+          window.location.href = '/admin'
+        }, 1500)
+        return
+      }
 
-      const response = await fetch('/api/admin/invoices', {
-        method: 'POST',
+      const url = existingInvoice?.id
+        ? `/api/admin/invoices/${existingInvoice.id}`
+        : '/api/admin/invoices'
+      const method = existingInvoice?.id ? 'PUT' : 'POST'
+
+      const response = await fetch(url, {
+        method,
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${token}`,
@@ -362,16 +498,25 @@ ${itemsText || '1. Redium Artwork & Vehicle Fitting Services - ₹' + grandTotal
         }),
       })
 
+      if (response.status === 401) {
+        localStorage.removeItem('adminToken')
+        setError('Admin session expired. Please log in again.')
+        setTimeout(() => {
+          window.location.href = '/admin'
+        }, 1500)
+        return
+      }
+
       if (response.ok) {
         onSuccess()
         onClose()
       } else {
-        const data = await response.json()
+        const data = await response.json().catch(() => ({}))
         setError(data.message || 'Failed to save bill')
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Error saving invoice:', err)
-      setError('Failed to save bill')
+      setError(`Failed to save bill: ${err?.message || 'Network error'}`)
     } finally {
       setLoading(false)
     }
@@ -837,7 +982,13 @@ ${itemsText || '1. Redium Artwork & Vehicle Fitting Services - ₹' + grandTotal
           </div>
 
           <div style={{ textAlign: 'center', width: '180px' }}>
-            <div style={{ height: '35px' }}></div>
+            <div style={{ height: '50px', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', paddingBottom: '2px' }}>
+              <img
+                src="/images/signature.png"
+                alt="Authorized Signatory"
+                style={{ maxHeight: '46px', maxWidth: '145px', objectFit: 'contain' }}
+              />
+            </div>
             <div
               style={{
                 borderTop: '1px solid #1f2937',
@@ -978,17 +1129,48 @@ ${itemsText || '1. Redium Artwork & Vehicle Fitting Services - ₹' + grandTotal
 
             {/* Customer Input Fields */}
             <div className="grid sm:grid-cols-2 gap-3 mb-5 bg-gray-50 p-3.5 rounded-xl border border-gray-200">
-              <div>
+              <div ref={customerInputRef} className="relative">
                 <label className="block text-xs font-bold uppercase text-gray-700 mb-1">
                   Customer Name:
                 </label>
                 <input
                   type="text"
-                  placeholder="Enter Customer Name"
+                  placeholder="Enter Customer Name (e.g. type 'vi')"
                   value={customerName}
-                  onChange={(e) => setCustomerName(e.target.value)}
-                  className="w-full font-bold text-gray-900 border border-gray-300 rounded-lg px-3 py-1.5 focus:border-primary focus:outline-none text-sm bg-white"
+                  onFocus={() => setIsNameFocused(true)}
+                  onChange={(e) => {
+                    setCustomerName(e.target.value)
+                    setIsNameFocused(true)
+                  }}
+                  className="w-full font-bold text-gray-900 border border-gray-300 rounded-lg px-3 py-1.5 focus:border-primary focus:outline-none text-sm bg-white shadow-sm"
                 />
+
+                {/* Live Client Autocomplete Dropdown */}
+                {isNameFocused && nameSuggestions.length > 0 && (
+                  <div className="absolute left-0 right-0 top-full mt-1 bg-white rounded-xl shadow-2xl border border-orange-200 overflow-hidden z-50 divide-y divide-gray-100">
+                    <div className="px-3 py-1 bg-orange-50/90 text-[10px] font-bold text-orange-900 flex justify-between items-center">
+                      <span>Existing Customers</span>
+                      <span className="text-[9px] text-orange-700">Click to autofill</span>
+                    </div>
+                    {nameSuggestions.map((sug, i) => (
+                      <button
+                        key={i}
+                        type="button"
+                        onClick={() => {
+                          setCustomerName(sug.name)
+                          if (sug.mobile) setCustomerMobile(sug.mobile)
+                          setIsNameFocused(false)
+                        }}
+                        className="w-full text-left px-3 py-2 hover:bg-orange-50 flex items-center justify-between text-xs transition"
+                      >
+                        <span className="font-bold text-gray-900">{sug.name}</span>
+                        <span className="text-gray-500 text-[11px]">
+                          {sug.mobile ? `📞 ${sug.mobile}` : ''}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
               <div>
                 <label className="block text-xs font-bold uppercase text-gray-700 mb-1">

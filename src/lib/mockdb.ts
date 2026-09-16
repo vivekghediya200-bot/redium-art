@@ -1,17 +1,86 @@
 import fs from 'fs'
 import path from 'path'
+import os from 'os'
 import bcrypt from 'bcryptjs'
 
-const DATA_DIR = path.join(process.cwd(), 'data')
+const ROOT_DATA_DIR = path.join(process.cwd(), 'data')
+const IS_SERVERLESS = Boolean(
+  process.env.VERCEL ||
+    process.env.VERCEL_ENV ||
+    process.env.AWS_LAMBDA_FUNCTION_NAME ||
+    process.env.NODE_ENV === 'production'
+)
+const DATA_DIR = IS_SERVERLESS ? path.join(os.tmpdir(), 'jaymataji_data') : ROOT_DATA_DIR
+
 const PRODUCTS_FILE = path.join(DATA_DIR, 'products.json')
 const GALLERY_FILE = path.join(DATA_DIR, 'gallery.json')
 const CUSTOMERS_FILE = path.join(DATA_DIR, 'customers.json')
 const INVOICES_FILE = path.join(DATA_DIR, 'invoices.json')
 const ADMINS_FILE = path.join(DATA_DIR, 'admins.json')
 
-// Ensure data directory exists
-if (!fs.existsSync(DATA_DIR)) {
-  fs.mkdirSync(DATA_DIR, { recursive: true })
+function ensureDirAndSeed() {
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      fs.mkdirSync(DATA_DIR, { recursive: true })
+    }
+    if (DATA_DIR !== ROOT_DATA_DIR && fs.existsSync(ROOT_DATA_DIR)) {
+      const files = ['products.json', 'gallery.json', 'customers.json', 'invoices.json', 'admins.json']
+      for (const f of files) {
+        const src = path.join(ROOT_DATA_DIR, f)
+        const dst = path.join(DATA_DIR, f)
+        if (fs.existsSync(src) && !fs.existsSync(dst)) {
+          try {
+            fs.copyFileSync(src, dst)
+          } catch (e) {
+            console.error('Error seeding file to tmp:', f, e)
+          }
+        }
+      }
+    }
+  } catch (err) {
+    console.error('Error ensuring DATA_DIR:', err)
+  }
+}
+
+ensureDirAndSeed()
+
+function safeReadFile(filePath: string): string {
+  try {
+    ensureDirAndSeed()
+    if (!fs.existsSync(filePath)) {
+      const baseName = path.basename(filePath)
+      const rootFallback = path.join(ROOT_DATA_DIR, baseName)
+      if (fs.existsSync(rootFallback)) {
+        return fs.readFileSync(rootFallback, 'utf-8')
+      }
+      return '[]'
+    }
+    return fs.readFileSync(filePath, 'utf-8')
+  } catch (e) {
+    console.error('safeReadFile error for', filePath, e)
+    return '[]'
+  }
+}
+
+function safeWriteFile(filePath: string, content: string): boolean {
+  try {
+    ensureDirAndSeed()
+    fs.writeFileSync(filePath, content, 'utf-8')
+    return true
+  } catch (err: any) {
+    console.error('safeWriteFile primary error:', err)
+    if (err.code === 'EROFS' || err.code === 'EACCES') {
+      try {
+        const tmpFallback = path.join(os.tmpdir(), 'jaymataji_data', path.basename(filePath))
+        fs.mkdirSync(path.dirname(tmpFallback), { recursive: true })
+        fs.writeFileSync(tmpFallback, content, 'utf-8')
+        return true
+      } catch (e2) {
+        console.error('safeWriteFile fallback error:', e2)
+      }
+    }
+    return false
+  }
 }
 
 export interface GalleryItem {
@@ -61,7 +130,7 @@ async function initializeAdmin(): Promise<void> {
   let admins: any[] = []
   if (fs.existsSync(ADMINS_FILE)) {
     try {
-      const content = fs.readFileSync(ADMINS_FILE, 'utf-8')
+      const content = safeReadFile(ADMINS_FILE)
       admins = JSON.parse(content)
       if (!Array.isArray(admins)) admins = []
     } catch {
@@ -79,15 +148,16 @@ async function initializeAdmin(): Promise<void> {
         createdAt: new Date().toISOString(),
       },
     ]
-    fs.writeFileSync(ADMINS_FILE, JSON.stringify(admins, null, 2))
+    safeWriteFile(ADMINS_FILE, JSON.stringify(admins, null, 2))
   }
 }
 
 // Initialize default files
 function initializeFiles(): void {
+  ensureDirAndSeed()
   if (!fs.existsSync(PRODUCTS_FILE)) {
     const defaultProducts: any[] = []
-    fs.writeFileSync(PRODUCTS_FILE, JSON.stringify(defaultProducts, null, 2))
+    safeWriteFile(PRODUCTS_FILE, JSON.stringify(defaultProducts, null, 2))
   }
 
   if (!fs.existsSync(GALLERY_FILE)) {
@@ -95,7 +165,7 @@ function initializeFiles(): void {
     // Seed from existing products if present
     if (fs.existsSync(PRODUCTS_FILE)) {
       try {
-        const prodData = JSON.parse(fs.readFileSync(PRODUCTS_FILE, 'utf-8'))
+        const prodData = JSON.parse(safeReadFile(PRODUCTS_FILE))
         if (Array.isArray(prodData)) {
           prodData.forEach((p: any) => {
             if (p.image) {
@@ -111,17 +181,17 @@ function initializeFiles(): void {
         console.error('Error migrating products to gallery:', err)
       }
     }
-    fs.writeFileSync(GALLERY_FILE, JSON.stringify(initialGallery, null, 2))
+    safeWriteFile(GALLERY_FILE, JSON.stringify(initialGallery, null, 2))
   }
 
   if (!fs.existsSync(CUSTOMERS_FILE)) {
     const defaultCustomers: Customer[] = []
-    fs.writeFileSync(CUSTOMERS_FILE, JSON.stringify(defaultCustomers, null, 2))
+    safeWriteFile(CUSTOMERS_FILE, JSON.stringify(defaultCustomers, null, 2))
   }
 
   if (!fs.existsSync(INVOICES_FILE)) {
     const defaultInvoices: Invoice[] = []
-    fs.writeFileSync(INVOICES_FILE, JSON.stringify(defaultInvoices, null, 2))
+    safeWriteFile(INVOICES_FILE, JSON.stringify(defaultInvoices, null, 2))
   }
 }
 
@@ -133,7 +203,7 @@ export function getAllGalleryImages(): GalleryItem[] {
   try {
     initializeFiles()
     if (!fs.existsSync(GALLERY_FILE)) return []
-    const data = fs.readFileSync(GALLERY_FILE, 'utf-8')
+    const data = safeReadFile(GALLERY_FILE)
     return JSON.parse(data)
   } catch (error) {
     console.error('Error reading gallery:', error)
@@ -149,7 +219,7 @@ export function addGalleryImages(images: string[]): GalleryItem[] {
     createdAt: new Date().toISOString(),
   }))
   const updated = [...newItems, ...current]
-  fs.writeFileSync(GALLERY_FILE, JSON.stringify(updated, null, 2))
+  safeWriteFile(GALLERY_FILE, JSON.stringify(updated, null, 2))
   return newItems
 }
 
@@ -157,8 +227,7 @@ export function deleteGalleryImage(id: string): boolean {
   const current = getAllGalleryImages()
   const filtered = current.filter((item) => item.id !== id)
   if (filtered.length === current.length) return false
-  fs.writeFileSync(GALLERY_FILE, JSON.stringify(filtered, null, 2))
-  return true
+  return safeWriteFile(GALLERY_FILE, JSON.stringify(filtered, null, 2))
 }
 
 export function deleteMultipleGalleryImages(ids: string[]): number {
@@ -166,7 +235,7 @@ export function deleteMultipleGalleryImages(ids: string[]): number {
   const idSet = new Set(ids)
   const filtered = current.filter((item) => !idSet.has(item.id))
   const removedCount = current.length - filtered.length
-  fs.writeFileSync(GALLERY_FILE, JSON.stringify(filtered, null, 2))
+  safeWriteFile(GALLERY_FILE, JSON.stringify(filtered, null, 2))
   return removedCount
 }
 
@@ -177,9 +246,9 @@ export function deleteMultipleGalleryImages(ids: string[]): number {
 export function getAllCustomers(): Customer[] {
   try {
     initializeFiles()
-    if (!fs.existsSync(CUSTOMERS_FILE)) return []
-    const data = fs.readFileSync(CUSTOMERS_FILE, 'utf-8')
-    return JSON.parse(data)
+    const data = safeReadFile(CUSTOMERS_FILE)
+    const parsed = JSON.parse(data)
+    return Array.isArray(parsed) ? parsed : []
   } catch (error) {
     console.error('Error reading customers:', error)
     return []
@@ -191,16 +260,16 @@ export function getCustomerById(id: string): Customer | undefined {
   return customers.find((c) => c.id === id)
 }
 
-export function findOrCreateCustomer(name: string, mobile: string): Customer {
+export function findOrCreateCustomer(name?: string, mobile?: string): Customer {
   const customers = getAllCustomers()
-  const trimmedName = name.trim()
-  const trimmedMobile = mobile.trim()
+  const trimmedName = String(name || '').trim()
+  const trimmedMobile = String(mobile || '').trim()
 
-  // Match by mobile or exact name
+  // Match by mobile or exact name safely
   let existing = customers.find(
     (c) =>
-      (trimmedMobile && c.mobile === trimmedMobile) ||
-      c.name.toLowerCase() === trimmedName.toLowerCase()
+      (trimmedMobile && c.mobile && c.mobile === trimmedMobile) ||
+      (trimmedName && c.name && c.name.toLowerCase() === trimmedName.toLowerCase())
   )
 
   if (existing) {
@@ -216,21 +285,21 @@ export function findOrCreateCustomer(name: string, mobile: string): Customer {
     }
     if (updated) {
       existing.updatedAt = new Date().toISOString()
-      fs.writeFileSync(CUSTOMERS_FILE, JSON.stringify(customers, null, 2))
+      safeWriteFile(CUSTOMERS_FILE, JSON.stringify(customers, null, 2))
     }
     return existing
   }
 
   const newCustomer: Customer = {
     id: `cust_${Date.now()}`,
-    name: trimmedName,
+    name: trimmedName || 'Walk-in Customer',
     mobile: trimmedMobile,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   }
 
   customers.push(newCustomer)
-  fs.writeFileSync(CUSTOMERS_FILE, JSON.stringify(customers, null, 2))
+  safeWriteFile(CUSTOMERS_FILE, JSON.stringify(customers, null, 2))
   return newCustomer
 }
 
@@ -241,9 +310,9 @@ export function findOrCreateCustomer(name: string, mobile: string): Customer {
 export function getAllInvoices(): Invoice[] {
   try {
     initializeFiles()
-    if (!fs.existsSync(INVOICES_FILE)) return []
-    const data = fs.readFileSync(INVOICES_FILE, 'utf-8')
-    return JSON.parse(data)
+    const data = safeReadFile(INVOICES_FILE)
+    const parsed = JSON.parse(data)
+    return Array.isArray(parsed) ? parsed : []
   } catch (error) {
     console.error('Error reading invoices:', error)
     return []
@@ -252,7 +321,7 @@ export function getAllInvoices(): Invoice[] {
 
 export function getInvoiceById(id: string): Invoice | undefined {
   const invoices = getAllInvoices()
-  return invoices.find((inv) => inv.id === id)
+  return invoices.find((inv) => inv.id.trim().toLowerCase() === id.trim().toLowerCase())
 }
 
 export function getInvoicesByCustomerId(customerId: string): Invoice[] {
@@ -262,7 +331,7 @@ export function getInvoicesByCustomerId(customerId: string): Invoice[] {
 
 export function createInvoice(data: {
   customerName: string
-  customerMobile: string
+  customerMobile?: string
   date?: string
   items: Array<{ description: string; qty: number; rate: number }>
   notes?: string
@@ -270,8 +339,17 @@ export function createInvoice(data: {
   const customer = findOrCreateCustomer(data.customerName, data.customerMobile)
   const invoices = getAllInvoices()
 
-  // Generate sequential/formatted invoice number e.g. INV-1001
-  const nextNumber = invoices.length + 1
+  // Calculate maximum existing invoice number to guarantee strictly unique ID
+  const maxNumber = invoices.reduce((max, inv) => {
+    if (!inv || !inv.id) return max
+    const match = inv.id.match(/\d+/)
+    if (match) {
+      const num = parseInt(match[0], 10)
+      return num > max ? num : max
+    }
+    return max
+  }, 0)
+  const nextNumber = maxNumber + 1
   const invoiceId = `INV-${String(nextNumber).padStart(4, '0')}`
 
   const items: InvoiceItem[] = (data.items || []).map((it, idx) => {
@@ -308,16 +386,79 @@ export function createInvoice(data: {
   }
 
   invoices.unshift(newInvoice)
-  fs.writeFileSync(INVOICES_FILE, JSON.stringify(invoices, null, 2))
+  safeWriteFile(INVOICES_FILE, JSON.stringify(invoices, null, 2))
   return newInvoice
 }
 
-export function deleteInvoice(id: string): boolean {
+export function updateInvoice(
+  id: string,
+  data: {
+    customerName?: string
+    customerMobile?: string
+    date?: string
+    items?: Array<{ description: string; qty: number; rate: number }>
+    notes?: string
+  }
+): Invoice | null {
   const invoices = getAllInvoices()
-  const filtered = invoices.filter((inv) => inv.id !== id)
-  if (filtered.length === invoices.length) return false
-  fs.writeFileSync(INVOICES_FILE, JSON.stringify(filtered, null, 2))
-  return true
+  const cleanId = id.trim().toLowerCase()
+  const index = invoices.findIndex((inv) => inv.id.trim().toLowerCase() === cleanId)
+  if (index === -1) return null
+
+  const existing = invoices[index]
+  const customer = data.customerName
+    ? findOrCreateCustomer(data.customerName, data.customerMobile || existing.customerMobile)
+    : null
+
+  let items = existing.items
+  let subtotal = existing.subtotal
+  let grandTotal = existing.grandTotal
+
+  if (data.items && Array.isArray(data.items)) {
+    items = data.items.map((it, idx) => {
+      const qty = Number(it.qty) || 1
+      const rate = Number(it.rate) || 0
+      return {
+        sr: idx + 1,
+        description: it.description || '',
+        qty,
+        rate,
+        total: Number((qty * rate).toFixed(2)),
+      }
+    })
+    subtotal = items.reduce((acc, curr) => acc + curr.total, 0)
+    grandTotal = subtotal
+  }
+
+  const updatedInvoice: Invoice = {
+    ...existing,
+    customerName: customer ? customer.name : existing.customerName,
+    customerMobile: customer ? customer.mobile : (data.customerMobile !== undefined ? data.customerMobile : existing.customerMobile),
+    customerId: customer ? customer.id : existing.customerId,
+    date: data.date || existing.date,
+    items,
+    subtotal,
+    grandTotal,
+    notes: data.notes !== undefined ? data.notes : existing.notes,
+    updatedAt: new Date().toISOString(),
+  }
+
+  invoices[index] = updatedInvoice
+  safeWriteFile(INVOICES_FILE, JSON.stringify(invoices, null, 2))
+  return updatedInvoice
+}
+
+export function deleteInvoice(id: string): boolean {
+  try {
+    const invoices = getAllInvoices()
+    const cleanId = id.trim().toLowerCase()
+    const filtered = invoices.filter((inv) => inv.id.trim().toLowerCase() !== cleanId)
+    if (filtered.length === invoices.length) return false
+    return safeWriteFile(INVOICES_FILE, JSON.stringify(filtered, null, 2))
+  } catch (e) {
+    console.error('Error deleting invoice:', e)
+    return false
+  }
 }
 
 /* =========================================================
@@ -350,7 +491,7 @@ export function addProduct(product: any) {
     updatedAt: new Date().toISOString(),
   }
   products.push(newProduct)
-  fs.writeFileSync(PRODUCTS_FILE, JSON.stringify(products, null, 2))
+  safeWriteFile(PRODUCTS_FILE, JSON.stringify(products, null, 2))
   return newProduct
 }
 
@@ -364,15 +505,14 @@ export function updateProduct(id: string, updates: any) {
     ...updates,
     updatedAt: new Date().toISOString(),
   }
-  fs.writeFileSync(PRODUCTS_FILE, JSON.stringify(products, null, 2))
+  safeWriteFile(PRODUCTS_FILE, JSON.stringify(products, null, 2))
   return products[index]
 }
 
 export function deleteProduct(id: string) {
   const products = getAllProducts()
   const filtered = products.filter((p: any) => p.id !== id)
-  fs.writeFileSync(PRODUCTS_FILE, JSON.stringify(filtered, null, 2))
-  return true
+  return safeWriteFile(PRODUCTS_FILE, JSON.stringify(filtered, null, 2))
 }
 
 /* =========================================================
@@ -427,7 +567,7 @@ export async function verifyAdminPassword(
         const idx = admins.findIndex((a: any) => a.id === admin.id)
         if (idx !== -1) {
           admins[idx].password = newHash
-          fs.writeFileSync(ADMINS_FILE, JSON.stringify(admins, null, 2))
+          safeWriteFile(ADMINS_FILE, JSON.stringify(admins, null, 2))
         }
       }
     }
@@ -462,7 +602,7 @@ export async function createAdmin(email: string, password: string) {
   }
 
   admins.push(newAdmin)
-  fs.writeFileSync(ADMINS_FILE, JSON.stringify(admins, null, 2))
+  safeWriteFile(ADMINS_FILE, JSON.stringify(admins, null, 2))
   return newAdmin
 }
 
@@ -477,8 +617,7 @@ export async function updateAdminPassword(
   const hashedPassword = await bcrypt.hash(newPassword, 10)
   admins[idx].password = hashedPassword
   admins[idx].updatedAt = new Date().toISOString()
-  fs.writeFileSync(ADMINS_FILE, JSON.stringify(admins, null, 2))
-  return true
+  return safeWriteFile(ADMINS_FILE, JSON.stringify(admins, null, 2))
 }
 
 export async function updateAdminCredentials(
@@ -512,7 +651,7 @@ export async function updateAdminCredentials(
   }
 
   admins[idx].updatedAt = new Date().toISOString()
-  fs.writeFileSync(ADMINS_FILE, JSON.stringify(admins, null, 2))
+  safeWriteFile(ADMINS_FILE, JSON.stringify(admins, null, 2))
   return { success: true, admin: admins[idx] }
 }
 

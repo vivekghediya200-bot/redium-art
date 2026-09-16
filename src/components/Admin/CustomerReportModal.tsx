@@ -10,6 +10,41 @@ interface CustomerReportModalProps {
   onClose: () => void
 }
 
+async function saveOrDownloadBlob(blob: Blob, suggestedName: string): Promise<boolean> {
+  if (typeof window !== 'undefined' && 'showSaveFilePicker' in window) {
+    try {
+      const handle = await (window as any).showSaveFilePicker({
+        suggestedName,
+        types: [
+          {
+            description: 'PDF Document (*.pdf)',
+            accept: { 'application/pdf': ['.pdf'] },
+          },
+        ],
+      })
+      const writable = await handle.createWritable()
+      await writable.write(blob)
+      await writable.close()
+      return true
+    } catch (err: any) {
+      if (err.name === 'AbortError') {
+        return false
+      }
+      console.warn('showSaveFilePicker failed or cancelled, falling back to download:', err)
+    }
+  }
+
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = suggestedName
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+  return true
+}
+
 export default function CustomerReportModal({
   customer,
   onClose,
@@ -142,8 +177,8 @@ export default function CustomerReportModal({
 
       const cleanName = customer.name.replace(/[^a-zA-Z0-9]/g, '_')
       const fileName = `Statement_${cleanName}_Lifetime.pdf`
-      pdf.save(fileName)
       const blob = pdf.output('blob')
+      await saveOrDownloadBlob(blob, fileName)
       return { fileName, blob }
     } catch (err) {
       console.error('Customer statement PDF error:', err)
@@ -180,35 +215,23 @@ export default function CustomerReportModal({
 📞 Mobile: 6353016927
 
 🙏 *Thank you for your valued patronage with us!*
-📄 _(Lifetime Statement PDF downloaded: ${fileName})_`
+📄 _(Lifetime Statement PDF saved to selected folder: ${fileName})_`
 
     let phone = (customer.mobile || '').replace(/\D/g, '')
     if (phone.length === 10) phone = '91' + phone
 
-    if (typeof navigator !== 'undefined' && navigator.canShare && blob) {
-      try {
-        const file = new File([blob], fileName, { type: 'application/pdf' })
-        if (navigator.canShare({ files: [file] })) {
-          await navigator.share({
-            files: [file],
-            title: `Lifetime Statement - ${customer.name}`,
-            text: message,
-          })
-          setShareNotice(`✅ Shared statement directly to WhatsApp!`)
-          return
-        }
-      } catch (e) {
-        // Continue to WhatsApp URL
-      }
-    }
+    const waAppUrl = phone
+      ? `whatsapp://send?phone=${phone}&text=${encodeURIComponent(message)}`
+      : `whatsapp://send?text=${encodeURIComponent(message)}`
 
-    const waUrl = phone
-      ? `https://wa.me/${phone}?text=${encodeURIComponent(message)}`
-      : `https://wa.me/?text=${encodeURIComponent(message)}`
+    const waLink = document.createElement('a')
+    waLink.href = waAppUrl
+    document.body.appendChild(waLink)
+    waLink.click()
+    document.body.removeChild(waLink)
 
-    window.open(waUrl, '_blank')
     setShareNotice(
-      `✅ Statement downloaded as "${fileName}"! WhatsApp opened for ${customer.name}.`
+      `✅ Statement saved to your folder as "${fileName}"! WhatsApp Application opened for ${customer.name}.`
     )
   }
 
@@ -789,7 +812,13 @@ export default function CustomerReportModal({
           </div>
 
           <div style={{ textAlign: 'center', width: '180px' }}>
-            <div style={{ height: '35px' }}></div>
+            <div style={{ height: '50px', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', paddingBottom: '2px' }}>
+              <img
+                src="/images/signature.png"
+                alt="Authorized Signatory"
+                style={{ maxHeight: '46px', maxWidth: '145px', objectFit: 'contain' }}
+              />
+            </div>
             <div
               style={{
                 borderTop: '1px solid #1f2937',
