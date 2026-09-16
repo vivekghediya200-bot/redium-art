@@ -172,19 +172,26 @@ export default function PublicInvoicePage() {
     if (phone.length === 10) phone = '91' + phone
 
     const downloadUrl = `${window.location.origin}/invoice/${invoice.id}`
+    const paymentLine = invoice.paymentStatus === 'PAID'
+      ? `💳 *Payment:* PAID (${invoice.paymentMethod || 'UPI'})`
+      : `⏳ *Payment:* PENDING`
+
     const message = `📄 *OFFICIAL INVOICE PDF: ${invoice.id}*
 👤 *Customer:* ${invoice.customerName}
-💰 *Total Amount:* ₹${invoice.grandTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+💰 *Grand Total:* ₹${invoice.grandTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+${paymentLine}
 
 📥 *Download / View Official PDF Invoice:*
 ${downloadUrl}
 
 🙏 *Jay Mataji Redium Art & Truck Show Fitting*
-📍 Porbandar | 📞 Contact: 6353016927`
+👤 *Owner:* Vivek Ghediya | 📞 Contact: 6353016927
+📸 *Instagram:* https://www.instagram.com/jay_mataji_truck_body_builder/?hl=en
+📍 *Location:* https://maps.google.com/?q=21°39'33.9%22N+69°36'22.1%22E`
 
     const waAppUrl = phone
-      ? `whatsapp://send?phone=${phone}&text=${encodeURIComponent(message)}`
-      : `whatsapp://send?text=${encodeURIComponent(message)}`
+      ? `https://api.whatsapp.com/send?phone=${phone}&text=${encodeURIComponent(message)}`
+      : `https://api.whatsapp.com/send?text=${encodeURIComponent(message)}`
 
     window.open(waAppUrl, '_blank')
   }

@@ -73,6 +73,12 @@ function safeWriteFile(filePath: string, content: string): boolean {
   try {
     ensureDirAndSeed()
     fs.writeFileSync(filePath, content, 'utf-8')
+    if (DATA_DIR !== ROOT_DATA_DIR && fs.existsSync(ROOT_DATA_DIR)) {
+      try {
+        const rootCopy = path.join(ROOT_DATA_DIR, path.basename(filePath))
+        fs.writeFileSync(rootCopy, content, 'utf-8')
+      } catch {}
+    }
     return true
   } catch (err: any) {
     console.error('safeWriteFile primary error:', err)
@@ -255,19 +261,32 @@ export function addGalleryImages(images: string[]): GalleryItem[] {
 
 export function deleteGalleryImage(id: string): boolean {
   const current = getAllGalleryImages()
-  const filtered = current.filter((item) => item.id !== id)
+  const cleanId = decodeURIComponent(String(id || '')).trim()
+  const filtered = current.filter((item) => {
+    const itemId = String(item.id || '').trim()
+    return itemId !== cleanId && itemId !== String(id).trim()
+  })
   if (filtered.length === current.length) return false
   inMemoryGalleryCache = filtered
+  inMemoryGalleryMtime = Date.now()
   return safeWriteFile(GALLERY_FILE, JSON.stringify(filtered))
 }
 
 export function deleteMultipleGalleryImages(ids: string[]): number {
   const current = getAllGalleryImages()
-  const idSet = new Set(ids)
-  const filtered = current.filter((item) => !idSet.has(item.id))
+  const cleanIdSet = new Set(
+    ids.map((id) => decodeURIComponent(String(id || '')).trim().toLowerCase())
+  )
+  const filtered = current.filter((item) => {
+    const itemId = String(item.id || '').trim().toLowerCase()
+    return !cleanIdSet.has(itemId) && !ids.includes(item.id)
+  })
   const removedCount = current.length - filtered.length
-  inMemoryGalleryCache = filtered
-  safeWriteFile(GALLERY_FILE, JSON.stringify(filtered))
+  if (removedCount > 0) {
+    inMemoryGalleryCache = filtered
+    inMemoryGalleryMtime = Date.now()
+    safeWriteFile(GALLERY_FILE, JSON.stringify(filtered))
+  }
   return removedCount
 }
 
@@ -376,13 +395,22 @@ export function updateCustomer(
 export function deleteCustomer(id: string): boolean {
   try {
     const customers = getAllCustomers()
-    const filtered = customers.filter((c) => c.id !== id)
+    const cleanId = decodeURIComponent(String(id || '')).trim().toLowerCase()
+    const target = customers.find((c) => (c.id || '').trim().toLowerCase() === cleanId)
+    const filtered = customers.filter((c) => (c.id || '').trim().toLowerCase() !== cleanId)
     if (filtered.length === customers.length) return false
     safeWriteFile(CUSTOMERS_FILE, JSON.stringify(filtered, null, 2))
 
-    // Also delete all invoices for this customer
+    // Also delete all invoices for this customer by customerId or customerName
     const invoices = getAllInvoices()
-    const filteredInvoices = invoices.filter((inv) => inv.customerId !== id)
+    const targetName = target?.name?.trim().toLowerCase()
+    const filteredInvoices = invoices.filter((inv) => {
+      const invCustId = (inv.customerId || '').trim().toLowerCase()
+      const invCustName = (inv.customerName || '').trim().toLowerCase()
+      if (invCustId === cleanId) return false
+      if (targetName && invCustName === targetName) return false
+      return true
+    })
     safeWriteFile(INVOICES_FILE, JSON.stringify(filteredInvoices, null, 2))
 
     return true
@@ -415,7 +443,17 @@ export function getInvoiceById(id: string): Invoice | undefined {
 
 export function getInvoicesByCustomerId(customerId: string): Invoice[] {
   const invoices = getAllInvoices()
-  return invoices.filter((inv) => inv.customerId === customerId)
+  const cleanId = (customerId || '').trim().toLowerCase()
+  const customers = getAllCustomers()
+  const cust = customers.find((c) => (c.id || '').trim().toLowerCase() === cleanId)
+  const custName = cust?.name?.trim().toLowerCase()
+
+  return invoices.filter((inv) => {
+    const invCustId = (inv.customerId || '').trim().toLowerCase()
+    if (invCustId === cleanId) return true
+    if (custName && (inv.customerName || '').trim().toLowerCase() === custName) return true
+    return false
+  })
 }
 
 export function createInvoice(data: {
@@ -550,8 +588,8 @@ export function updateInvoice(
 export function deleteInvoice(id: string): boolean {
   try {
     const invoices = getAllInvoices()
-    const cleanId = id.trim().toLowerCase()
-    const filtered = invoices.filter((inv) => inv.id.trim().toLowerCase() !== cleanId)
+    const cleanId = decodeURIComponent(String(id || '')).trim().toLowerCase()
+    const filtered = invoices.filter((inv) => (inv.id || '').trim().toLowerCase() !== cleanId)
     if (filtered.length === invoices.length) return false
     return safeWriteFile(INVOICES_FILE, JSON.stringify(filtered, null, 2))
   } catch (e) {

@@ -44,7 +44,7 @@ export default function AdminGalleryManager() {
 
     try {
       const token = localStorage.getItem('adminToken')
-      const res = await fetch(`/api/gallery/${id}`, {
+      const res = await fetch(`/api/gallery/${encodeURIComponent(id)}`, {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${token}` },
       })
@@ -55,9 +55,13 @@ export default function AdminGalleryManager() {
           next.delete(id)
           return next
         })
+      } else {
+        const err = await res.json().catch(() => ({}))
+        alert(err.message || 'Failed to delete image')
       }
     } catch (err) {
       console.error('Error deleting photo:', err)
+      alert('Error occurred while deleting photo')
     }
   }
 
@@ -83,25 +87,36 @@ export default function AdminGalleryManager() {
     if (selectedIds.size === 0) return
     if (
       !confirm(
-        `Are you sure you want to delete ${selectedIds.size} selected image(s)?`
+        `Are you sure you want to permanently delete ${selectedIds.size} selected image(s)?`
       )
     )
       return
 
-    const token = localStorage.getItem('adminToken')
-    for (const id of Array.from(selectedIds)) {
-      try {
-        await fetch(`/api/gallery/${id}`, {
-          method: 'DELETE',
-          headers: { Authorization: `Bearer ${token}` },
-        })
-      } catch (e) {
-        console.error('Delete error for id', id, e)
-      }
-    }
+    try {
+      const token = localStorage.getItem('adminToken')
+      const idsToDelete = Array.from(selectedIds)
+      const res = await fetch('/api/gallery', {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ ids: idsToDelete }),
+      })
 
-    setSelectedIds(new Set())
-    fetchPhotos()
+      if (res.ok) {
+        setPhotos((prev) => prev.filter((p) => !selectedIds.has(p.id)))
+        setSelectedIds(new Set())
+      } else {
+        const err = await res.json().catch(() => ({}))
+        alert(err.message || 'Failed to delete selected images')
+      }
+    } catch (e) {
+      console.error('Delete error:', e)
+      alert('Error occurred while deleting images')
+    } finally {
+      fetchPhotos()
+    }
   }
 
   return (

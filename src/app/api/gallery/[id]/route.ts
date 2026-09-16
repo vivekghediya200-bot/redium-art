@@ -24,7 +24,8 @@ export async function DELETE(
 
   try {
     await initializeDatabase()
-    const success = deleteGalleryImage(params.id)
+    const cleanId = decodeURIComponent(params.id || '').trim()
+    const success = deleteGalleryImage(cleanId)
 
     if (!success) {
       return NextResponse.json(

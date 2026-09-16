@@ -94,12 +94,17 @@ export default function InvoiceModal({
           { sr: 3, description: '', qty: 1, rate: '', total: 0 },
         ]
   )
+  const [savedInvoiceId, setSavedInvoiceId] = useState<string | null>(
+    existingInvoice?.id || null
+  )
   const [loading, setLoading] = useState(false)
   const [pdfLoading, setPdfLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [shareNotice, setShareNotice] = useState<string | null>(null)
 
   const pdfTemplateRef = useRef<HTMLDivElement>(null)
+
+  const effectiveBillId = savedInvoiceId || existingInvoice?.id || 'BILL'
 
   // Fetch customers for fast autocomplete in customer name field
   useEffect(() => {
@@ -163,14 +168,19 @@ export default function InvoiceModal({
   // Sync state if existingInvoice changes
   useEffect(() => {
     if (existingInvoice) {
+      setSavedInvoiceId(existingInvoice.id || null)
       setCustomerName(existingInvoice.customerName || '')
       setCustomerMobile(existingInvoice.customerMobile || '')
       setDate(
         existingInvoice.date || new Date().toISOString().split('T')[0]
       )
+      setPaymentStatus(existingInvoice.paymentStatus || 'PAID')
+      setPaymentMethod(existingInvoice.paymentMethod || 'UPI')
       if (existingInvoice.items && existingInvoice.items.length > 0) {
         setItems(existingInvoice.items)
       }
+    } else {
+      setSavedInvoiceId(null)
     }
   }, [existingInvoice])
 
@@ -207,6 +217,86 @@ export default function InvoiceModal({
 
   const grandTotal = items.reduce((acc, it) => acc + (it.total || 0), 0)
 
+  // Core Save Routine: ensures bill is saved/updated on server and returns real invoice with ID
+  const saveInvoiceToServer = async (): Promise<any | null> => {
+    if (!customerName.trim()) {
+      setError('Customer name is required')
+      return null
+    }
+
+    const validItems = items.filter(
+      (it) => it.description && it.description.trim() !== ''
+    )
+    if (validItems.length === 0) {
+      setError('Please add at least one item description')
+      return null
+    }
+
+    try {
+      const token = localStorage.getItem('adminToken')
+      if (!token) {
+        setError('Admin session expired. Please log in again.')
+        setTimeout(() => {
+          window.location.href = '/admin'
+        }, 1500)
+        return null
+      }
+
+      const currentId = savedInvoiceId || existingInvoice?.id
+      const url = currentId
+        ? `/api/admin/invoices/${encodeURIComponent(currentId)}`
+        : '/api/admin/invoices'
+      const method = currentId ? 'PUT' : 'POST'
+
+      const response = await fetch(url, {
+        method,
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          customerName: customerName.trim(),
+          customerMobile: customerMobile.trim(),
+          date,
+          paymentStatus,
+          paymentMethod: paymentStatus === 'PENDING' ? undefined : paymentMethod,
+          items: validItems.map((it) => ({
+            description: it.description.trim(),
+            qty: Number(it.qty) || 1,
+            rate: Number(it.rate) || 0,
+          })),
+        }),
+      })
+
+      if (response.status === 401) {
+        localStorage.removeItem('adminToken')
+        setError('Admin session expired. Please log in again.')
+        setTimeout(() => {
+          window.location.href = '/admin'
+        }, 1500)
+        return null
+      }
+
+      if (response.ok) {
+        const resData = await response.json()
+        const inv = resData.invoice
+        if (inv && inv.id) {
+          setSavedInvoiceId(inv.id)
+        }
+        onSuccess()
+        return inv
+      } else {
+        const data = await response.json().catch(() => ({}))
+        setError(data.message || 'Failed to save bill')
+        return null
+      }
+    } catch (saveErr: any) {
+      console.error('Error saving invoice:', saveErr)
+      setError(`Failed to save bill: ${saveErr?.message || 'Network error'}`)
+      return null
+    }
+  }
+
   // Generate & Download PDF using high-resolution structured template
   const handleDownloadPDF = async (): Promise<{
     fileName: string
@@ -215,35 +305,18 @@ export default function InvoiceModal({
     setPdfLoading(true)
     setError(null)
     try {
-      // Auto-save bill to history if new
-      const validItems = items.filter(
-        (it) => it.description && it.description.trim() !== ''
-      )
-      if (customerName.trim() && validItems.length > 0 && !existingInvoice?.id) {
-        try {
-          const token = localStorage.getItem('adminToken')
-          await fetch('/api/admin/invoices', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${token}`,
-            },
-            body: JSON.stringify({
-              customerName: customerName.trim(),
-              customerMobile: customerMobile.trim(),
-              date,
-              items: validItems.map((it) => ({
-                description: it.description.trim(),
-                qty: Number(it.qty) || 1,
-                rate: Number(it.rate) || 0,
-              })),
-            }),
-          })
-          onSuccess()
-        } catch (saveErr) {
-          console.error('Auto-save error:', saveErr)
+      // 1. Ensure invoice is saved to server first to get/sync real INV-XXXX
+      let currentId = savedInvoiceId || existingInvoice?.id
+      if (!currentId) {
+        const saved = await saveInvoiceToServer()
+        if (saved && saved.id) {
+          currentId = saved.id
+          // Allow DOM to re-render with the new bill number
+          await new Promise((resolve) => setTimeout(resolve, 80))
         }
       }
+
+      const billId = currentId || savedInvoiceId || existingInvoice?.id || 'BILL'
 
       const element = document.getElementById('invoice-pdf-render-zone')
       if (!element) {
@@ -340,7 +413,6 @@ export default function InvoiceModal({
         }
       }
 
-      const billId = existingInvoice?.id || 'BILL'
       const cleanName = (customerName || 'Customer').replace(
         /[^a-zA-Z0-9]/g,
         '_'
@@ -367,8 +439,20 @@ export default function InvoiceModal({
     }
 
     setShareNotice(null)
+    setPdfLoading(true)
 
-    // 1. Generate the actual PDF blob first
+    // 1. Ensure invoice is saved to server FIRST so real INV-XXXX exists
+    let currentId = savedInvoiceId || existingInvoice?.id
+    if (!currentId) {
+      const saved = await saveInvoiceToServer()
+      if (saved && saved.id) {
+        currentId = saved.id
+        await new Promise((resolve) => setTimeout(resolve, 80))
+      }
+    }
+    const billId = currentId || savedInvoiceId || existingInvoice?.id || 'BILL'
+
+    // 2. Generate the actual PDF blob
     let savedPdfName = ''
     let pdfBlob: Blob | null = null
     try {
@@ -381,9 +465,7 @@ export default function InvoiceModal({
       console.error('Error generating PDF for WhatsApp share:', pdfErr)
     }
 
-    const billId = existingInvoice?.id || 'BILL'
-
-    // 2. If Web Share API supports sending actual PDF files, send the real PDF file directly!
+    // 3. If Web Share API supports sending actual PDF files, send the real PDF file directly!
     if (pdfBlob && typeof navigator !== 'undefined' && navigator.canShare) {
       try {
         const pdfFile = new File([pdfBlob], savedPdfName || `${billId}.pdf`, {
@@ -396,15 +478,19 @@ export default function InvoiceModal({
             text: `Official PDF Invoice ${billId} - Jay Mataji Redium Art`,
           })
           setShareNotice(`✅ Actual PDF file attached and sent to WhatsApp!`)
+          setPdfLoading(false)
           return
         }
       } catch (shareErr: any) {
-        if (shareErr.name === 'AbortError') return
+        if (shareErr.name === 'AbortError') {
+          setPdfLoading(false)
+          return
+        }
         console.warn('Native share failed or cancelled, falling back to direct WhatsApp link:', shareErr)
       }
     }
 
-    // 3. Fallback: Concise WhatsApp message with direct public PDF link
+    // 4. Fallback: Concise WhatsApp message with direct public PDF link
     const origin = typeof window !== 'undefined' ? window.location.origin : ''
     const pdfUrl = `${origin}/invoice/${billId}`
 
@@ -433,7 +519,7 @@ ${pdfUrl}
       phone = '91' + phone
     }
 
-    // 4. Copy invoice image to clipboard so Ctrl+V in WhatsApp sends the full visual bill immediately
+    // 5. Copy invoice image to clipboard so Ctrl+V in WhatsApp sends the full visual bill immediately
     try {
       const element = document.getElementById('invoice-pdf-render-zone')
       if (element && typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
@@ -454,81 +540,23 @@ ${pdfUrl}
       console.warn('Clipboard image copy error:', e)
     }
 
-    // 5. Open WhatsApp directly with the customer phone and clean message
+    // 6. Open WhatsApp directly with the customer phone and clean message
     const waUrl = phone
       ? `https://api.whatsapp.com/send?phone=${phone}&text=${encodeURIComponent(message)}`
       : `https://api.whatsapp.com/send?text=${encodeURIComponent(message)}`
 
     window.open(waUrl, '_blank')
-    setShareNotice(`✅ Official invoice link prepared! Paste into WhatsApp chat.`)
+    setShareNotice(`✅ Official invoice ${billId} link opened in WhatsApp!`)
+    setPdfLoading(false)
   }
 
   const handleSave = async () => {
-    if (!customerName.trim()) {
-      setError('Customer name is required')
-      return
-    }
-
-    const validItems = items.filter(
-      (it) => it.description && it.description.trim() !== ''
-    )
-    if (validItems.length === 0) {
-      setError('Please add at least one item description')
-      return
-    }
-
     try {
       setLoading(true)
       setError(null)
-      const token = localStorage.getItem('adminToken')
-      if (!token) {
-        setError('Admin session expired. Please log in again.')
-        setTimeout(() => {
-          window.location.href = '/admin'
-        }, 1500)
-        return
-      }
-
-      const url = existingInvoice?.id
-        ? `/api/admin/invoices/${existingInvoice.id}`
-        : '/api/admin/invoices'
-      const method = existingInvoice?.id ? 'PUT' : 'POST'
-
-      const response = await fetch(url, {
-        method,
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          customerName: customerName.trim(),
-          customerMobile: customerMobile.trim(),
-          date,
-          paymentStatus,
-          paymentMethod: paymentStatus === 'PENDING' ? undefined : paymentMethod,
-          items: validItems.map((it) => ({
-            description: it.description.trim(),
-            qty: Number(it.qty) || 1,
-            rate: Number(it.rate) || 0,
-          })),
-        }),
-      })
-
-      if (response.status === 401) {
-        localStorage.removeItem('adminToken')
-        setError('Admin session expired. Please log in again.')
-        setTimeout(() => {
-          window.location.href = '/admin'
-        }, 1500)
-        return
-      }
-
-      if (response.ok) {
-        onSuccess()
+      const inv = await saveInvoiceToServer()
+      if (inv) {
         onClose()
-      } else {
-        const data = await response.json().catch(() => ({}))
-        setError(data.message || 'Failed to save bill')
       }
     } catch (err: any) {
       console.error('Error saving invoice:', err)
@@ -668,7 +696,7 @@ ${pdfUrl}
               >
                 Bill No:{' '}
                 <span style={{ color: '#111827' }}>
-                  {existingInvoice?.id || 'BILL'}
+                  {effectiveBillId}
                 </span>
               </div>
               <div
@@ -1082,8 +1110,8 @@ ${pdfUrl}
               <span className="text-2xl">🧾</span>
               <div>
                 <h2 className="text-base sm:text-lg font-bold text-gray-900 leading-tight">
-                  {existingInvoice
-                    ? `Bill No: ${existingInvoice.id}`
+                  {effectiveBillId !== 'BILL'
+                    ? `Bill No: ${effectiveBillId}`
                     : 'Create New Bill / Invoice'}
                 </h2>
                 <p className="text-xs text-gray-500">

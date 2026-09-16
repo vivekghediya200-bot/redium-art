@@ -71,6 +71,8 @@ export default function ShopReportModal({
       customerName: string
       customerMobile: string
       grandTotal: number
+      paymentStatus?: 'PAID' | 'PENDING'
+      paymentMethod?: 'CASH' | 'UPI' | 'CARD'
       items: Array<{
         description: string
         qty: number
@@ -87,6 +89,8 @@ export default function ShopReportModal({
           customerName: cust.name,
           customerMobile: cust.mobile,
           grandTotal: inv.grandTotal,
+          paymentStatus: inv.paymentStatus || 'PAID',
+          paymentMethod: inv.paymentMethod || 'UPI',
           items: inv.items,
         })
       })
@@ -155,6 +159,57 @@ export default function ShopReportModal({
     const set = new Set<string>()
     filteredInvoices.forEach((inv) => set.add(inv.customerName.toLowerCase()))
     return set.size
+  }, [filteredInvoices])
+
+  // Structured Collection Breakdown (Paid, Pending, UPI, Cash, Card)
+  const collectionStats = useMemo(() => {
+    let totalPaid = 0
+    let paidCount = 0
+    let totalPending = 0
+    let pendingCount = 0
+    let upiTotal = 0
+    let upiCount = 0
+    let cashTotal = 0
+    let cashCount = 0
+    let cardTotal = 0
+    let cardCount = 0
+
+    filteredInvoices.forEach((inv) => {
+      const amount = inv.grandTotal || 0
+      const status = inv.paymentStatus || 'PAID'
+      const method = inv.paymentMethod || 'UPI'
+
+      if (status === 'PAID') {
+        totalPaid += amount
+        paidCount++
+        if (method === 'UPI') {
+          upiTotal += amount
+          upiCount++
+        } else if (method === 'CASH') {
+          cashTotal += amount
+          cashCount++
+        } else if (method === 'CARD') {
+          cardTotal += amount
+          cardCount++
+        }
+      } else {
+        totalPending += amount
+        pendingCount++
+      }
+    })
+
+    return {
+      totalPaid,
+      paidCount,
+      totalPending,
+      pendingCount,
+      upiTotal,
+      upiCount,
+      cashTotal,
+      cashCount,
+      cardTotal,
+      cardCount,
+    }
   }, [filteredInvoices])
 
   // Top services / items breakdown
@@ -352,32 +407,31 @@ export default function ShopReportModal({
       console.error('Shop report PDF error during share:', pdfErr)
     }
 
-    const message = `📊 *JAY MATAJI REDIUM ART - BUSINESS PERFORMANCE REPORT*
+    const message = `📊 *JAY MATAJI REDIUM ART - BUSINESS PERFORMANCE & COLLECTION REPORT*
 *Scope:* ${scopeLabel}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
-💰 *Total Revenue:* ₹${totalRevenue.toLocaleString('en-IN', {
-      minimumFractionDigits: 2,
-    })}
-🧾 *Total Invoices:* ${totalBills}
+💰 *Total Gross Revenue:* ₹${totalRevenue.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+💳 *Paid Collection:* ₹${collectionStats.totalPaid.toLocaleString('en-IN', { minimumFractionDigits: 2 })} (${collectionStats.paidCount} Bills)
+⏳ *Pending (Udhar):* ₹${collectionStats.totalPending.toLocaleString('en-IN', { minimumFractionDigits: 2 })} (${collectionStats.pendingCount} Bills)
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+*STRUCTURE-WISE COLLECTIONS:*
+📱 *UPI:* ₹${collectionStats.upiTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })} (${collectionStats.upiCount} Bills)
+💵 *Cash:* ₹${collectionStats.cashTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })} (${collectionStats.cashCount} Bills)
+💳 *Card:* ₹${collectionStats.cardTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })} (${collectionStats.cardCount} Bills)
+━━━━━━━━━━━━━━━━━━━━━━━━━━
+🧾 *Total Bills Issued:* ${totalBills}
 👥 *Unique Customers:* ${uniqueCustomersCount}
-📈 *Average Sale / Bill:* ₹${avgBillValue.toLocaleString('en-IN', {
-      minimumFractionDigits: 2,
-    })}
+📈 *Average Sale / Bill:* ₹${avgBillValue.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
 ${bestClients.length > 0 ? `⭐ *Top Client:* ${bestClients[0].name} (₹${bestClients[0].totalSpent.toLocaleString('en-IN')})\n` : ''}━━━━━━━━━━━━━━━━━━━━━━━━━━
-📍 Porbandar Khambhaliya highway bokhira, Near Vachhrajdada Temple, Porbandar 360575
-📞 Contact: 6353016927
+👤 *Owner:* Vivek Ghediya | 📞 Contact: 6353016927
+📸 *Instagram:* https://www.instagram.com/jay_mataji_truck_body_builder/?hl=en
+📍 *Location:* https://maps.google.com/?q=21°39'33.9%22N+69°36'22.1%22E`
 
-📄 _Official Business Performance Report PDF has been saved to your selected folder._`
-
-    const waAppUrl = `whatsapp://send?text=${encodeURIComponent(message)}`
-    const waLink = document.createElement('a')
-    waLink.href = waAppUrl
-    document.body.appendChild(waLink)
-    waLink.click()
-    document.body.removeChild(waLink)
+    const waAppUrl = `https://api.whatsapp.com/send?text=${encodeURIComponent(message)}`
+    window.open(waAppUrl, '_blank')
 
     setShareNotice(
-      `✅ Report ${savedFileName ? `"${savedFileName}"` : ''} saved to your folder! WhatsApp Application opened with executive summary.`
+      `✅ Report ${savedFileName ? `"${savedFileName}"` : ''} downloaded! Executive report opened in WhatsApp.`
     )
   }
 
@@ -688,6 +742,111 @@ ${bestClients.length > 0 ? `⭐ *Top Client:* ${bestClients[0].name} (₹${bestC
               {avgBillValue.toLocaleString('en-IN', {
                 minimumFractionDigits: 0,
               })}
+            </div>
+          </div>
+        </div>
+
+        {/* STRUCTURE-WISE COLLECTION CARDS IN PDF */}
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(5, 1fr)',
+            gap: '10px',
+            marginBottom: '18px',
+          }}
+        >
+          <div
+            style={{
+              border: '1.5px solid #10b981',
+              borderRadius: '8px',
+              padding: '10px',
+              backgroundColor: '#ecfdf5',
+            }}
+          >
+            <div style={{ fontSize: '10px', fontWeight: '800', color: '#047857', textTransform: 'uppercase' }}>
+              Paid Collection
+            </div>
+            <div style={{ fontSize: '16px', fontWeight: '900', color: '#065f46', marginTop: '2px' }}>
+              ₹{collectionStats.totalPaid.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+            </div>
+            <div style={{ fontSize: '9px', color: '#047857', marginTop: '2px', fontWeight: '600' }}>
+              {collectionStats.paidCount} Paid Bills
+            </div>
+          </div>
+
+          <div
+            style={{
+              border: '1.5px solid #f59e0b',
+              borderRadius: '8px',
+              padding: '10px',
+              backgroundColor: '#fffbeb',
+            }}
+          >
+            <div style={{ fontSize: '10px', fontWeight: '800', color: '#b45309', textTransform: 'uppercase' }}>
+              Pending (Udhar)
+            </div>
+            <div style={{ fontSize: '16px', fontWeight: '900', color: '#92400e', marginTop: '2px' }}>
+              ₹{collectionStats.totalPending.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+            </div>
+            <div style={{ fontSize: '9px', color: '#b45309', marginTop: '2px', fontWeight: '600' }}>
+              {collectionStats.pendingCount} Pending Bills
+            </div>
+          </div>
+
+          <div
+            style={{
+              border: '1.5px solid #8b5cf6',
+              borderRadius: '8px',
+              padding: '10px',
+              backgroundColor: '#f5f3ff',
+            }}
+          >
+            <div style={{ fontSize: '10px', fontWeight: '800', color: '#6d28d9', textTransform: 'uppercase' }}>
+              UPI Collection
+            </div>
+            <div style={{ fontSize: '16px', fontWeight: '900', color: '#5b21b6', marginTop: '2px' }}>
+              ₹{collectionStats.upiTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+            </div>
+            <div style={{ fontSize: '9px', color: '#6d28d9', marginTop: '2px', fontWeight: '600' }}>
+              {collectionStats.upiCount} UPI Bills
+            </div>
+          </div>
+
+          <div
+            style={{
+              border: '1.5px solid #0284c7',
+              borderRadius: '8px',
+              padding: '10px',
+              backgroundColor: '#f0f9ff',
+            }}
+          >
+            <div style={{ fontSize: '10px', fontWeight: '800', color: '#0369a1', textTransform: 'uppercase' }}>
+              Cash (&quot;Case&quot;)
+            </div>
+            <div style={{ fontSize: '16px', fontWeight: '900', color: '#075985', marginTop: '2px' }}>
+              ₹{collectionStats.cashTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+            </div>
+            <div style={{ fontSize: '9px', color: '#0369a1', marginTop: '2px', fontWeight: '600' }}>
+              {collectionStats.cashCount} Cash Bills
+            </div>
+          </div>
+
+          <div
+            style={{
+              border: '1.5px solid #64748b',
+              borderRadius: '8px',
+              padding: '10px',
+              backgroundColor: '#f8fafc',
+            }}
+          >
+            <div style={{ fontSize: '10px', fontWeight: '800', color: '#334155', textTransform: 'uppercase' }}>
+              Card Collection
+            </div>
+            <div style={{ fontSize: '16px', fontWeight: '900', color: '#1e293b', marginTop: '2px' }}>
+              ₹{collectionStats.cardTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+            </div>
+            <div style={{ fontSize: '9px', color: '#334155', marginTop: '2px', fontWeight: '600' }}>
+              {collectionStats.cardCount} Card Bills
             </div>
           </div>
         </div>
@@ -1230,6 +1389,69 @@ ${bestClients.length > 0 ? `⭐ *Top Client:* ${bestClients[0].name} (₹${bestC
                   {avgBillValue.toLocaleString('en-IN', {
                     minimumFractionDigits: 0,
                   })}
+                </span>
+              </div>
+            </div>
+
+            {/* STRUCTURE-WISE COLLECTION CARDS ON SCREEN */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-3">
+              <div className="p-4 rounded-2xl bg-emerald-600 text-white shadow-sm">
+                <span className="text-[10px] font-bold uppercase tracking-wider block text-emerald-100">
+                  Paid Collection
+                </span>
+                <span className="text-xl sm:text-2xl font-black mt-1 block">
+                  ₹{collectionStats.totalPaid.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                </span>
+                <span className="text-[11px] text-emerald-100 font-semibold mt-1 block">
+                  {collectionStats.paidCount} Paid Bills
+                </span>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-amber-500 text-white shadow-sm">
+                <span className="text-[10px] font-bold uppercase tracking-wider block text-amber-100">
+                  Pending (Udhar)
+                </span>
+                <span className="text-xl sm:text-2xl font-black mt-1 block">
+                  ₹{collectionStats.totalPending.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                </span>
+                <span className="text-[11px] text-amber-100 font-semibold mt-1 block">
+                  {collectionStats.pendingCount} Pending Bills
+                </span>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-purple-600 text-white shadow-sm">
+                <span className="text-[10px] font-bold uppercase tracking-wider block text-purple-100">
+                  UPI Collection
+                </span>
+                <span className="text-xl sm:text-2xl font-black mt-1 block">
+                  ₹{collectionStats.upiTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                </span>
+                <span className="text-[11px] text-purple-100 font-semibold mt-1 block">
+                  {collectionStats.upiCount} UPI Bills
+                </span>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-blue-600 text-white shadow-sm">
+                <span className="text-[10px] font-bold uppercase tracking-wider block text-blue-100">
+                  Cash (&quot;Case&quot;)
+                </span>
+                <span className="text-xl sm:text-2xl font-black mt-1 block">
+                  ₹{collectionStats.cashTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                </span>
+                <span className="text-[11px] text-blue-100 font-semibold mt-1 block">
+                  {collectionStats.cashCount} Cash Bills
+                </span>
+              </div>
+
+              <div className="p-4 rounded-2xl bg-slate-800 text-white shadow-sm">
+                <span className="text-[10px] font-bold uppercase tracking-wider block text-gray-300">
+                  Card Collection
+                </span>
+                <span className="text-xl sm:text-2xl font-black mt-1 block">
+                  ₹{collectionStats.cardTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                </span>
+                <span className="text-[11px] text-gray-300 font-semibold mt-1 block">
+                  {collectionStats.cardCount} Card Bills
                 </span>
               </div>
             </div>

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import {
   getAllGalleryImages,
   addGalleryImages,
+  deleteMultipleGalleryImages,
   initializeDatabase,
 } from '@/lib/mockdb'
 import { verifyToken, getTokenFromHeader } from '@/lib/auth'
@@ -111,4 +112,35 @@ export async function POST(request: NextRequest) {
     )
   }
 }
+
+// Protected DELETE for batch photo removal
+export async function DELETE(request: NextRequest) {
+  const auth = checkAuth(request)
+  if (!auth) {
+    return NextResponse.json({ message: 'Unauthorized' }, { status: 401 })
+  }
+
+  try {
+    await initializeDatabase()
+    const body = await request.json().catch(() => ({}))
+    const { ids } = body
+
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return NextResponse.json({ message: 'No photo IDs provided' }, { status: 400 })
+    }
+
+    const removedCount = deleteMultipleGalleryImages(ids)
+    return NextResponse.json({
+      message: `${removedCount} photo(s) permanently deleted`,
+      count: removedCount,
+    })
+  } catch (error) {
+    console.error('Error batch deleting photos:', error)
+    return NextResponse.json(
+      { message: 'Error deleting photos' },
+      { status: 500 }
+    )
+  }
+}
+
 

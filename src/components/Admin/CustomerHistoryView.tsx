@@ -56,6 +56,41 @@ export default function CustomerHistoryView() {
     mobile: string
   } | null>(null)
 
+  // View Mode: 'collection' (Structure-wise All Bills & Collection) vs 'directory' (Customers Directory)
+  const [viewMode, setViewMode] = useState<'collection' | 'directory'>('collection')
+
+  // Date Range and Filter states for structured collection
+  const [datePreset, setDatePreset] = useState<'all' | 'today' | 'yesterday' | 'this_week' | 'this_month' | 'custom'>('all')
+  const [startDate, setStartDate] = useState<string>('')
+  const [endDate, setEndDate] = useState<string>(() => new Date().toISOString().split('T')[0])
+  const [statusFilter, setStatusFilter] = useState<'ALL' | 'PAID' | 'PENDING'>('ALL')
+  const [methodFilter, setMethodFilter] = useState<'ALL' | 'UPI' | 'CASH' | 'CARD'>('ALL')
+
+  const applyDatePreset = (preset: 'all' | 'today' | 'yesterday' | 'this_week' | 'this_month' | 'custom') => {
+    setDatePreset(preset)
+    const today = new Date().toISOString().split('T')[0]
+    if (preset === 'today') {
+      setStartDate(today)
+      setEndDate(today)
+    } else if (preset === 'yesterday') {
+      const y = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+      setStartDate(y)
+      setEndDate(y)
+    } else if (preset === 'this_week') {
+      const w = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+      setStartDate(w)
+      setEndDate(today)
+    } else if (preset === 'this_month') {
+      const d = new Date()
+      const mStart = new Date(d.getFullYear(), d.getMonth(), 1).toISOString().split('T')[0]
+      setStartDate(mStart)
+      setEndDate(today)
+    } else if (preset === 'all') {
+      setStartDate('')
+      setEndDate('')
+    }
+  }
+
   const searchBoxRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -300,6 +335,140 @@ export default function CustomerHistoryView() {
     }
   }
 
+  // Flatten all invoices across customers with complete customer metadata
+  const allInvoices = useMemo(() => {
+    const list: Array<{
+      id: string
+      date: string
+      customerId: string
+      customerName: string
+      customerMobile: string
+      grandTotal: number
+      paymentStatus?: 'PAID' | 'PENDING'
+      paymentMethod?: 'CASH' | 'UPI' | 'CARD'
+      items: Array<{
+        sr: number
+        description: string
+        qty: number
+        rate: number
+        total: number
+      }>
+    }> = []
+
+    const pool = allCustomers.length > 0 ? allCustomers : customers
+    pool.forEach((c) => {
+      (c.invoices || []).forEach((inv) => {
+        list.push({
+          id: inv.id,
+          date: inv.date,
+          customerId: c.id,
+          customerName: c.name,
+          customerMobile: c.mobile,
+          grandTotal: inv.grandTotal || 0,
+          paymentStatus: inv.paymentStatus || 'PAID',
+          paymentMethod: inv.paymentMethod || 'UPI',
+          items: inv.items || [],
+        })
+      })
+    })
+
+    return list.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+  }, [allCustomers, customers])
+
+  // Filter invoices based on date range, status, payment method, and search
+  const filteredInvoices = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase()
+    return allInvoices.filter((inv) => {
+      if (startDate && inv.date < startDate) return false
+      if (endDate && inv.date > endDate) return false
+
+      if (statusFilter !== 'ALL') {
+        const invStatus = inv.paymentStatus || 'PAID'
+        if (invStatus !== statusFilter) return false
+      }
+
+      if (methodFilter !== 'ALL') {
+        if (inv.paymentStatus === 'PENDING') return false
+        const invMethod = inv.paymentMethod || 'UPI'
+        if (invMethod !== methodFilter) return false
+      }
+
+      if (q) {
+        const nameMatch = (inv.customerName || '').toLowerCase().includes(q)
+        const phoneMatch = (inv.customerMobile || '').toLowerCase().includes(q)
+        const idMatch = (inv.id || '').toLowerCase().includes(q)
+        if (!nameMatch && !phoneMatch && !idMatch) return false
+      }
+
+      return true
+    })
+  }, [allInvoices, startDate, endDate, statusFilter, methodFilter, searchQuery])
+
+  // Structured Collection Metrics in the selected date interval
+  const collectionMetrics = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase()
+    const inRange = allInvoices.filter((inv) => {
+      if (startDate && inv.date < startDate) return false
+      if (endDate && inv.date > endDate) return false
+      if (q) {
+        const nameMatch = (inv.customerName || '').toLowerCase().includes(q)
+        const phoneMatch = (inv.customerMobile || '').toLowerCase().includes(q)
+        const idMatch = (inv.id || '').toLowerCase().includes(q)
+        if (!nameMatch && !phoneMatch && !idMatch) return false
+      }
+      return true
+    })
+
+    let totalPaid = 0
+    let paidCount = 0
+    let totalPending = 0
+    let pendingCount = 0
+    let upiTotal = 0
+    let upiCount = 0
+    let cashTotal = 0
+    let cashCount = 0
+    let cardTotal = 0
+    let cardCount = 0
+
+    inRange.forEach((inv) => {
+      const amount = inv.grandTotal || 0
+      const status = inv.paymentStatus || 'PAID'
+      const method = inv.paymentMethod || 'UPI'
+
+      if (status === 'PAID') {
+        totalPaid += amount
+        paidCount++
+        if (method === 'UPI') {
+          upiTotal += amount
+          upiCount++
+        } else if (method === 'CASH') {
+          cashTotal += amount
+          cashCount++
+        } else if (method === 'CARD') {
+          cardTotal += amount
+          cardCount++
+        }
+      } else {
+        totalPending += amount
+        pendingCount++
+      }
+    })
+
+    return {
+      totalPaid,
+      paidCount,
+      totalPending,
+      pendingCount,
+      upiTotal,
+      upiCount,
+      cashTotal,
+      cashCount,
+      cardTotal,
+      cardCount,
+      totalBills: inRange.length,
+    }
+  }, [allInvoices, startDate, endDate, searchQuery])
+
   const selectedCustomer = customers.find((c) => c.id === selectedCustomerId)
 
   return (
@@ -410,8 +579,499 @@ export default function CustomerHistoryView() {
         </div>
       </div>
 
-      {/* Main Grid: Customer List & Customer Detail Timeline */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+      {/* View Mode Toggle: Structured Collection vs Customer Directory */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-white p-3 rounded-2xl shadow-sm border border-gray-200">
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setViewMode('collection')}
+            className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-bold transition flex items-center gap-2 ${
+              viewMode === 'collection'
+                ? 'bg-primary text-white shadow-sm'
+                : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+            }`}
+          >
+            <span>📊</span> All Bills &amp; Collection Ledger
+            <span
+              className={`px-2 py-0.5 rounded-full text-[11px] font-extrabold ${
+                viewMode === 'collection'
+                  ? 'bg-white/20 text-white'
+                  : 'bg-gray-200 text-gray-800'
+              }`}
+            >
+              {allInvoices.length}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setViewMode('directory')}
+            className={`px-4 py-2 rounded-xl text-xs sm:text-sm font-bold transition flex items-center gap-2 ${
+              viewMode === 'directory'
+                ? 'bg-primary text-white shadow-sm'
+                : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+            }`}
+          >
+            <span>👥</span> Customer Directory
+            <span
+              className={`px-2 py-0.5 rounded-full text-[11px] font-extrabold ${
+                viewMode === 'directory'
+                  ? 'bg-white/20 text-white'
+                  : 'bg-gray-200 text-gray-800'
+              }`}
+            >
+              {customers.length}
+            </span>
+          </button>
+        </div>
+
+        <div className="text-xs text-gray-500 font-medium">
+          {viewMode === 'collection'
+            ? '📊 Structure-wise UPI, Cash & Card collection from date to date'
+            : '👥 Customer-wise visit histories, statements & client records'}
+        </div>
+      </div>
+
+      {/* =========================================================================
+          VIEW 1: STRUCTURE-WISE ALL BILLS & COLLECTION DASHBOARD
+         ========================================================================= */}
+      {viewMode === 'collection' && (
+        <div className="space-y-6">
+          {/* Date Range Selector & Period Quick Presets */}
+          <div className="bg-white p-5 rounded-2xl shadow-sm border border-gray-200 space-y-4">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div>
+                <h3 className="text-base font-bold text-gray-900 flex items-center gap-2">
+                  <span>📅</span> Filter Collection by Date (Last Date to Current Date)
+                </h3>
+                <p className="text-xs text-gray-500 mt-0.5">
+                  Select start date and end date to see exact UPI, Cash, and Card collections
+                </p>
+              </div>
+
+              {/* Quick Preset Buttons */}
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {(
+                  [
+                    { id: 'all', label: 'All Time' },
+                    { id: 'today', label: 'Today' },
+                    { id: 'yesterday', label: 'Yesterday' },
+                    { id: 'this_week', label: 'This Week' },
+                    { id: 'this_month', label: 'This Month' },
+                  ] as const
+                ).map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => applyDatePreset(p.id)}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-bold transition ${
+                      datePreset === p.id
+                        ? 'bg-gray-900 text-white shadow-sm'
+                        : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+                    }`}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Date Pickers */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 pt-2 border-t border-gray-100">
+              <div>
+                <label className="block text-xs font-bold text-gray-700 mb-1">
+                  From Date:
+                </label>
+                <input
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => {
+                    setStartDate(e.target.value)
+                    setDatePreset('custom')
+                  }}
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-gray-700 mb-1">
+                  To Date (Current Date):
+                </label>
+                <input
+                  type="date"
+                  value={endDate}
+                  onChange={(e) => {
+                    setEndDate(e.target.value)
+                    setDatePreset('custom')
+                  }}
+                  className="w-full px-3 py-2 text-sm border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary"
+                />
+              </div>
+
+              <div className="flex items-end">
+                {(startDate || endDate) && (
+                  <button
+                    type="button"
+                    onClick={() => applyDatePreset('all')}
+                    className="w-full sm:w-auto px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-bold rounded-xl transition"
+                  >
+                    Reset to All Dates
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* STRUCTURE-WISE COLLECTION CARDS (5 Cards) */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+            {/* 1. Total Paid Collection */}
+            <div className="bg-gradient-to-br from-emerald-600 to-green-700 text-white p-5 rounded-2xl shadow-sm relative overflow-hidden">
+              <div className="flex justify-between items-start">
+                <div>
+                  <div className="text-xs uppercase font-bold tracking-wider text-emerald-100">
+                    Total Paid Collection
+                  </div>
+                  <div className="text-2xl font-black mt-2">
+                    ₹{collectionMetrics.totalPaid.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                  </div>
+                </div>
+                <span className="text-3xl opacity-80">💰</span>
+              </div>
+              <div className="mt-3 text-xs text-emerald-100 font-semibold flex items-center gap-1">
+                <span>✓</span> {collectionMetrics.paidCount} Paid Bill(s)
+              </div>
+            </div>
+
+            {/* 2. Total Pending (Udhar) */}
+            <div className="bg-gradient-to-br from-amber-500 to-orange-600 text-white p-5 rounded-2xl shadow-sm relative overflow-hidden">
+              <div className="flex justify-between items-start">
+                <div>
+                  <div className="text-xs uppercase font-bold tracking-wider text-amber-100">
+                    Pending Bills (Udhar)
+                  </div>
+                  <div className="text-2xl font-black mt-2">
+                    ₹{collectionMetrics.totalPending.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                  </div>
+                </div>
+                <span className="text-3xl opacity-80">⏳</span>
+              </div>
+              <div className="mt-3 text-xs text-amber-100 font-semibold flex items-center gap-1">
+                <span>⚠️</span> {collectionMetrics.pendingCount} Pending Bill(s)
+              </div>
+            </div>
+
+            {/* 3. UPI Collection */}
+            <div className="bg-gradient-to-br from-purple-600 to-indigo-700 text-white p-5 rounded-2xl shadow-sm relative overflow-hidden">
+              <div className="flex justify-between items-start">
+                <div>
+                  <div className="text-xs uppercase font-bold tracking-wider text-purple-100">
+                    UPI Collection
+                  </div>
+                  <div className="text-2xl font-black mt-2">
+                    ₹{collectionMetrics.upiTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                  </div>
+                </div>
+                <span className="text-3xl opacity-80">📱</span>
+              </div>
+              <div className="mt-3 text-xs text-purple-100 font-semibold">
+                {collectionMetrics.upiCount} UPI Bill(s)
+              </div>
+            </div>
+
+            {/* 4. Cash Collection ("Case") */}
+            <div className="bg-gradient-to-br from-blue-600 to-cyan-700 text-white p-5 rounded-2xl shadow-sm relative overflow-hidden">
+              <div className="flex justify-between items-start">
+                <div>
+                  <div className="text-xs uppercase font-bold tracking-wider text-blue-100">
+                    Cash (&quot;Case&quot;) Collection
+                  </div>
+                  <div className="text-2xl font-black mt-2">
+                    ₹{collectionMetrics.cashTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                  </div>
+                </div>
+                <span className="text-3xl opacity-80">💵</span>
+              </div>
+              <div className="mt-3 text-xs text-blue-100 font-semibold">
+                {collectionMetrics.cashCount} Cash Bill(s)
+              </div>
+            </div>
+
+            {/* 5. Card Collection */}
+            <div className="bg-gradient-to-br from-slate-700 to-gray-900 text-white p-5 rounded-2xl shadow-sm relative overflow-hidden">
+              <div className="flex justify-between items-start">
+                <div>
+                  <div className="text-xs uppercase font-bold tracking-wider text-gray-300">
+                    Card Collection
+                  </div>
+                  <div className="text-2xl font-black mt-2">
+                    ₹{collectionMetrics.cardTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                  </div>
+                </div>
+                <span className="text-3xl opacity-80">💳</span>
+              </div>
+              <div className="mt-3 text-xs text-gray-300 font-semibold">
+                {collectionMetrics.cardCount} Card Bill(s)
+              </div>
+            </div>
+          </div>
+
+          {/* Filter Tabs: Payment Status & Payment Method */}
+          <div className="bg-white p-4 rounded-2xl shadow-sm border border-gray-200 space-y-3">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              {/* Status Tabs */}
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs font-bold text-gray-600 mr-1">Status:</span>
+                <button
+                  type="button"
+                  onClick={() => setStatusFilter('ALL')}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition ${
+                    statusFilter === 'ALL'
+                      ? 'bg-gray-900 text-white shadow-sm'
+                      : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+                  }`}
+                >
+                  All Bills ({collectionMetrics.totalBills})
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setStatusFilter('PAID')}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1 ${
+                    statusFilter === 'PAID'
+                      ? 'bg-emerald-600 text-white shadow-sm'
+                      : 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200'
+                  }`}
+                >
+                  <span>✓</span> PAID ({collectionMetrics.paidCount})
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setStatusFilter('PENDING')}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center gap-1 ${
+                    statusFilter === 'PENDING'
+                      ? 'bg-amber-600 text-white shadow-sm'
+                      : 'bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200'
+                  }`}
+                >
+                  <span>⏳</span> PENDING ({collectionMetrics.pendingCount})
+                </button>
+              </div>
+
+              {/* Method Tabs */}
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs font-bold text-gray-600 mr-1">Method:</span>
+                {(
+                  [
+                    { id: 'ALL', label: 'All Methods' },
+                    { id: 'UPI', label: `📱 UPI (${collectionMetrics.upiCount})` },
+                    { id: 'CASH', label: `💵 Cash (${collectionMetrics.cashCount})` },
+                    { id: 'CARD', label: `💳 Card (${collectionMetrics.cardCount})` },
+                  ] as const
+                ).map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    onClick={() => setMethodFilter(m.id)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition ${
+                      methodFilter === m.id
+                        ? 'bg-indigo-600 text-white shadow-sm'
+                        : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+                    }`}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* STRUCTURE-WISE BILLS LEDGER TABLE */}
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+            <div className="p-4 bg-gray-50 border-b flex justify-between items-center flex-wrap gap-2">
+              <div className="flex items-center gap-2">
+                <h3 className="font-bold text-gray-900 text-base">
+                  Recorded Bills ({filteredInvoices.length})
+                </h3>
+                {startDate && endDate && (
+                  <span className="text-xs bg-gray-200 text-gray-800 px-2.5 py-0.5 rounded-full font-semibold">
+                    {startDate} to {endDate}
+                  </span>
+                )}
+              </div>
+              <button
+                onClick={() => {
+                  setPrefilledCustomer(null)
+                  setActiveInvoiceForPrint(null)
+                  setShowInvoiceModal(true)
+                }}
+                className="px-3.5 py-1.5 bg-primary text-white text-xs font-bold rounded-lg hover:bg-secondary transition flex items-center gap-1 shadow-sm"
+              >
+                <span>+</span> New Bill
+              </button>
+            </div>
+
+            {loading ? (
+              <div className="p-12 text-center text-gray-400">Loading bills...</div>
+            ) : filteredInvoices.length === 0 ? (
+              <div className="p-16 text-center text-gray-400">
+                <span className="text-4xl block mb-2">🧾</span>
+                <p className="font-bold text-gray-700">No bills match the selected filters or date range.</p>
+                <p className="text-xs text-gray-500 mt-1">
+                  Try clearing the date filter or creating a new bill.
+                </p>
+                <button
+                  onClick={() => applyDatePreset('all')}
+                  className="mt-4 px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-800 rounded-xl text-xs font-bold"
+                >
+                  Show All Bills
+                </button>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse text-sm">
+                  <thead>
+                    <tr className="bg-gray-100/70 border-b border-gray-200 text-gray-700 text-xs uppercase font-extrabold tracking-wider">
+                      <th className="py-3.5 px-4">Bill No</th>
+                      <th className="py-3.5 px-4">Date</th>
+                      <th className="py-3.5 px-4">Customer</th>
+                      <th className="py-3.5 px-4">Work / Items</th>
+                      <th className="py-3.5 px-4">Status</th>
+                      <th className="py-3.5 px-4">Payment Method</th>
+                      <th className="py-3.5 px-4 text-right">Grand Total</th>
+                      <th className="py-3.5 px-4 text-center">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-100">
+                    {filteredInvoices.map((inv) => (
+                      <tr key={inv.id} className="hover:bg-orange-50/40 transition">
+                        {/* Bill No */}
+                        <td className="py-3 px-4 whitespace-nowrap">
+                          <span className="px-2.5 py-1 bg-sky-100 text-sky-900 rounded font-extrabold text-xs">
+                            {inv.id}
+                          </span>
+                        </td>
+
+                        {/* Date */}
+                        <td className="py-3 px-4 text-gray-600 text-xs whitespace-nowrap font-medium">
+                          {inv.date}
+                        </td>
+
+                        {/* Customer */}
+                        <td className="py-3 px-4 whitespace-nowrap">
+                          <div className="font-bold text-gray-900">{inv.customerName}</div>
+                          {inv.customerMobile ? (
+                            <div className="text-xs text-gray-500 flex items-center gap-1.5 mt-0.5">
+                              <span>📞 {inv.customerMobile}</span>
+                            </div>
+                          ) : (
+                            <div className="text-xs text-gray-400">No phone</div>
+                          )}
+                        </td>
+
+                        {/* Items */}
+                        <td className="py-3 px-4 max-w-xs">
+                          <div className="text-xs text-gray-700 font-medium truncate">
+                            {(inv.items || [])
+                              .map((it) => `${it.description || 'Work'} (${it.qty || 1})`)
+                              .join(', ') || 'No item descriptions'}
+                          </div>
+                        </td>
+
+                        {/* Status */}
+                        <td className="py-3 px-4 whitespace-nowrap">
+                          {inv.paymentStatus === 'PAID' ? (
+                            <span className="px-2.5 py-1 bg-emerald-100 text-emerald-800 border border-emerald-300 rounded font-extrabold text-[11px] inline-flex items-center gap-1">
+                              <span>✓</span> PAID
+                            </span>
+                          ) : (
+                            <span className="px-2.5 py-1 bg-amber-100 text-amber-800 border border-amber-300 rounded font-extrabold text-[11px] inline-flex items-center gap-1">
+                              <span>⏳</span> PENDING
+                            </span>
+                          )}
+                        </td>
+
+                        {/* Payment Method */}
+                        <td className="py-3 px-4 whitespace-nowrap">
+                          {inv.paymentStatus === 'PAID' ? (
+                            inv.paymentMethod === 'UPI' ? (
+                              <span className="px-2 py-0.5 bg-purple-100 text-purple-800 font-bold rounded text-xs">
+                                📱 UPI
+                              </span>
+                            ) : inv.paymentMethod === 'CASH' ? (
+                              <span className="px-2 py-0.5 bg-blue-100 text-blue-800 font-bold rounded text-xs">
+                                💵 CASH
+                              </span>
+                            ) : (
+                              <span className="px-2 py-0.5 bg-slate-100 text-slate-800 font-bold rounded text-xs">
+                                💳 CARD
+                              </span>
+                            )
+                          ) : (
+                            <span className="text-xs text-gray-400 font-medium">—</span>
+                          )}
+                        </td>
+
+                        {/* Grand Total */}
+                        <td className="py-3 px-4 text-right whitespace-nowrap">
+                          <span className="font-extrabold text-gray-900 text-sm">
+                            ₹{(inv.grandTotal || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                          </span>
+                        </td>
+
+                        {/* Actions */}
+                        <td className="py-3 px-4 whitespace-nowrap text-center">
+                          <div className="flex items-center justify-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setActiveInvoiceForPrint(inv)
+                                setShowInvoiceModal(true)
+                              }}
+                              className="px-2.5 py-1 bg-green-50 hover:bg-green-100 text-green-700 text-xs font-semibold rounded border border-green-200 transition"
+                              title="Share PDF on WhatsApp"
+                            >
+                              📲 WhatsApp
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setActiveInvoiceForPrint(inv)
+                                setShowInvoiceModal(true)
+                              }}
+                              className="px-2 py-1 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-semibold rounded transition"
+                              title="View and Print Bill"
+                            >
+                              🖨️ View
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteInvoice(inv.id)}
+                              disabled={deleteLoading === inv.id}
+                              className="px-2 py-1 bg-red-50 hover:bg-red-100 text-red-700 text-xs font-semibold rounded border border-red-200 transition disabled:opacity-50"
+                              title="Delete bill permanently"
+                            >
+                              🗑️
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* =========================================================================
+          VIEW 2: CUSTOMER DIRECTORY & LIFETIME HISTORIES
+         ========================================================================= */}
+      {viewMode === 'directory' && (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         
         {/* Left Column: Customer Directory (4 cols) */}
         <div className="lg:col-span-4 bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden flex flex-col h-[700px]">
@@ -682,6 +1342,7 @@ export default function CustomerHistoryView() {
           )}
         </div>
       </div>
+      )}
 
       {/* Invoice Modal for Creating or Printing a Bill */}
       {showInvoiceModal && (
