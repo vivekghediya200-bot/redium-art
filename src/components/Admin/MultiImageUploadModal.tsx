@@ -8,14 +8,14 @@ interface MultiImageUploadModalProps {
 }
 
 async function safelyOptimizeImage(file: File): Promise<File | Blob> {
-  // If file is already smaller than 1.2 MB, return it as-is
-  if (file.size <= 1.2 * 1024 * 1024) {
+  // If file is already tiny (< 150 KB), return it as-is
+  if (file.size <= 150 * 1024) {
     return file
   }
 
-  // 3-second safety timeout so image processing NEVER hangs
+  // 2.5-second safety timeout so image processing NEVER hangs
   return new Promise((resolve) => {
-    const timer = setTimeout(() => resolve(file), 3000)
+    const timer = setTimeout(() => resolve(file), 2500)
 
     try {
       const img = new Image()
@@ -26,7 +26,7 @@ async function safelyOptimizeImage(file: File): Promise<File | Blob> {
         URL.revokeObjectURL(url)
 
         try {
-          const maxDimension = 1600
+          const maxDimension = 1200
           let w = img.naturalWidth || img.width
           let h = img.naturalHeight || img.height
 
@@ -59,7 +59,7 @@ async function safelyOptimizeImage(file: File): Promise<File | Blob> {
               }
             },
             'image/jpeg',
-            0.82
+            0.78
           )
         } catch {
           resolve(file)
@@ -150,20 +150,29 @@ export default function MultiImageUploadModal({
 
     let successCount = 0
     const errors: string[] = []
+    const BATCH_SIZE = 4
 
-    // Upload each image one-by-one so you can upload as many as you want without hitting the 4.5MB cloud limit!
-    for (let i = 0; i < selectedFiles.length; i++) {
-      const file = selectedFiles[i]
+    // Upload in small optimized batches so 70+ images upload rapidly without hanging or exceeding limits
+    for (let i = 0; i < selectedFiles.length; i += BATCH_SIZE) {
+      const batch = selectedFiles.slice(i, i + BATCH_SIZE)
+      const currentCount = Math.min(i + BATCH_SIZE, selectedFiles.length)
+
       setUploadProgress({
-        current: i + 1,
+        current: currentCount,
         total: selectedFiles.length,
-        currentFileName: file.name,
+        currentFileName: batch.map((f) => f.name).join(', '),
       })
 
       try {
-        const optimized = await safelyOptimizeImage(file)
         const formData = new FormData()
-        formData.append('images', optimized, file.name)
+        for (const file of batch) {
+          const optimized = await safelyOptimizeImage(file)
+          formData.append('images', optimized, file.name)
+        }
+
+        // 25-second timeout controller so a slow connection never freezes the UI
+        const controller = new AbortController()
+        const timeoutId = setTimeout(() => controller.abort(), 25000)
 
         const response = await fetch('/api/gallery', {
           method: 'POST',
@@ -171,10 +180,12 @@ export default function MultiImageUploadModal({
             Authorization: `Bearer ${token}`,
           },
           body: formData,
+          signal: controller.signal,
         })
+        clearTimeout(timeoutId)
 
         if (response.ok) {
-          successCount++
+          successCount += batch.length
         } else {
           if (response.status === 401) {
             localStorage.removeItem('adminToken')
@@ -187,10 +198,14 @@ export default function MultiImageUploadModal({
             return
           }
           const errData = await response.json().catch(() => ({}))
-          errors.push(`${file.name}: ${errData.message || 'Upload failed'}`)
+          errors.push(`Batch (${batch.map((b) => b.name).join(', ')}): ${errData.message || 'Upload failed'}`)
         }
       } catch (err: any) {
-        errors.push(`${file.name}: ${err?.message || 'Network error'}`)
+        errors.push(
+          `Batch (${batch.map((b) => b.name).join(', ')}): ${
+            err?.name === 'AbortError' ? 'Timed out' : err?.message || 'Network error'
+          }`
+        )
       }
     }
 
@@ -204,7 +219,7 @@ export default function MultiImageUploadModal({
         onClose()
       } else {
         setError(
-          `Uploaded ${successCount} of ${selectedFiles.length} images. Failed for: ${errors.join(', ')}`
+          `Uploaded ${successCount} of ${selectedFiles.length} images. Failed for: ${errors.join('; ')}`
         )
       }
     } else {

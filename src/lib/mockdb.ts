@@ -47,15 +47,22 @@ ensureDirAndSeed()
 function safeReadFile(filePath: string): string {
   try {
     ensureDirAndSeed()
+    let content = ''
     if (!fs.existsSync(filePath)) {
       const baseName = path.basename(filePath)
       const rootFallback = path.join(ROOT_DATA_DIR, baseName)
       if (fs.existsSync(rootFallback)) {
-        return fs.readFileSync(rootFallback, 'utf-8')
+        content = fs.readFileSync(rootFallback, 'utf-8')
+      } else {
+        return '[]'
       }
-      return '[]'
+    } else {
+      content = fs.readFileSync(filePath, 'utf-8')
     }
-    return fs.readFileSync(filePath, 'utf-8')
+    if (content.charCodeAt(0) === 0xfeff) {
+      content = content.slice(1)
+    }
+    return content
   } catch (e) {
     console.error('safeReadFile error for', filePath, e)
     return '[]'
@@ -219,7 +226,7 @@ export function addGalleryImages(images: string[]): GalleryItem[] {
     createdAt: new Date().toISOString(),
   }))
   const updated = [...newItems, ...current]
-  safeWriteFile(GALLERY_FILE, JSON.stringify(updated, null, 2))
+  safeWriteFile(GALLERY_FILE, JSON.stringify(updated))
   return newItems
 }
 
@@ -227,7 +234,7 @@ export function deleteGalleryImage(id: string): boolean {
   const current = getAllGalleryImages()
   const filtered = current.filter((item) => item.id !== id)
   if (filtered.length === current.length) return false
-  return safeWriteFile(GALLERY_FILE, JSON.stringify(filtered, null, 2))
+  return safeWriteFile(GALLERY_FILE, JSON.stringify(filtered))
 }
 
 export function deleteMultipleGalleryImages(ids: string[]): number {
@@ -235,7 +242,7 @@ export function deleteMultipleGalleryImages(ids: string[]): number {
   const idSet = new Set(ids)
   const filtered = current.filter((item) => !idSet.has(item.id))
   const removedCount = current.length - filtered.length
-  safeWriteFile(GALLERY_FILE, JSON.stringify(filtered, null, 2))
+  safeWriteFile(GALLERY_FILE, JSON.stringify(filtered))
   return removedCount
 }
 
