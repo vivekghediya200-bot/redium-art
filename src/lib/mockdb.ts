@@ -303,6 +303,63 @@ export function findOrCreateCustomer(name?: string, mobile?: string): Customer {
   return newCustomer
 }
 
+export function updateCustomer(
+  id: string,
+  data: { name?: string; mobile?: string }
+): Customer | null {
+  const customers = getAllCustomers()
+  const index = customers.findIndex((c) => c.id === id)
+  if (index === -1) return null
+
+  const newName = data.name !== undefined ? data.name.trim() : customers[index].name
+  const newMobile = data.mobile !== undefined ? data.mobile.trim() : customers[index].mobile
+
+  customers[index] = {
+    ...customers[index],
+    name: newName,
+    mobile: newMobile,
+    updatedAt: new Date().toISOString(),
+  }
+
+  safeWriteFile(CUSTOMERS_FILE, JSON.stringify(customers, null, 2))
+
+  // Also update all invoices associated with this customer
+  const invoices = getAllInvoices()
+  let invoicesUpdated = false
+  for (let i = 0; i < invoices.length; i++) {
+    if (invoices[i].customerId === id) {
+      invoices[i].customerName = newName
+      invoices[i].customerMobile = newMobile
+      invoices[i].updatedAt = new Date().toISOString()
+      invoicesUpdated = true
+    }
+  }
+  if (invoicesUpdated) {
+    safeWriteFile(INVOICES_FILE, JSON.stringify(invoices, null, 2))
+  }
+
+  return customers[index]
+}
+
+export function deleteCustomer(id: string): boolean {
+  try {
+    const customers = getAllCustomers()
+    const filtered = customers.filter((c) => c.id !== id)
+    if (filtered.length === customers.length) return false
+    safeWriteFile(CUSTOMERS_FILE, JSON.stringify(filtered, null, 2))
+
+    // Also delete all invoices for this customer
+    const invoices = getAllInvoices()
+    const filteredInvoices = invoices.filter((inv) => inv.customerId !== id)
+    safeWriteFile(INVOICES_FILE, JSON.stringify(filteredInvoices, null, 2))
+
+    return true
+  } catch (err) {
+    console.error('Error deleting customer:', err)
+    return false
+  }
+}
+
 /* =========================================================
    INVOICES / BILLING
    ========================================================= */
@@ -545,37 +602,24 @@ export async function verifyAdminPassword(
   if (!email || !password) return null
   const normalizedEmail = email.toLowerCase().trim()
   const admins = await getAllAdmins()
-  let admin = admins.find(
-    (a: any) => a.email && a.email.toLowerCase().trim() === normalizedEmail
-  )
 
-  const envEmail = DEFAULT_ADMIN_EMAIL
-  const envPass = DEFAULT_ADMIN_PASSWORD
-
-  // If credentials match default/env credentials
-  if (normalizedEmail === envEmail && password === envPass) {
-    if (!admin) {
-      admin = await createAdmin(envEmail, envPass)
-    } else {
-      // Ensure bcrypt hash in admins.json matches
-      const isBcryptValid = await bcrypt
-        .compare(password, admin.password)
-        .catch(() => false)
-      if (!isBcryptValid) {
-        const newHash = await bcrypt.hash(envPass, 10)
-        admin.password = newHash
-        const idx = admins.findIndex((a: any) => a.id === admin.id)
-        if (idx !== -1) {
-          admins[idx].password = newHash
-          safeWriteFile(ADMINS_FILE, JSON.stringify(admins, null, 2))
-        }
-      }
+  // Only if no admins exist at all, allow bootstrapping with env/default credentials
+  if (admins.length === 0) {
+    const envEmail = DEFAULT_ADMIN_EMAIL
+    const envPass = DEFAULT_ADMIN_PASSWORD
+    if (normalizedEmail === envEmail && password === envPass) {
+      return await createAdmin(envEmail, envPass)
     }
-    return admin
+    return null
   }
 
+  // Find admin strictly by normalized email
+  const admin = admins.find(
+    (a: any) => a.email && a.email.toLowerCase().trim() === normalizedEmail
+  )
   if (!admin) return null
 
+  // Strictly verify bcrypt hash against the admin's active password
   const isBcryptValid = await bcrypt
     .compare(password, admin.password)
     .catch(() => false)

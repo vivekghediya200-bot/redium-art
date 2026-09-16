@@ -36,6 +36,14 @@ export default function CustomerHistoryView() {
   const [loading, setLoading] = useState(true)
   const [deleteLoading, setDeleteLoading] = useState<string | null>(null)
 
+  // Edit / Delete customer states
+  const [showEditCustomerModal, setShowEditCustomerModal] = useState(false)
+  const [editCustomerId, setEditCustomerId] = useState<string | null>(null)
+  const [editCustomerName, setEditCustomerName] = useState('')
+  const [editCustomerMobile, setEditCustomerMobile] = useState('')
+  const [isSavingCustomer, setIsSavingCustomer] = useState(false)
+  const [isDeletingCustomer, setIsDeletingCustomer] = useState<string | null>(null)
+
   // Modals state
   const [showInvoiceModal, setShowInvoiceModal] = useState(false)
   const [showCustomerReportModal, setShowCustomerReportModal] = useState(false)
@@ -194,6 +202,99 @@ export default function CustomerHistoryView() {
       alert('Error occurred while deleting invoice')
     } finally {
       setDeleteLoading(null)
+    }
+  }
+
+  const handleDeleteCustomer = async (cust: CustomerData) => {
+    const billCount = cust.invoices.length
+    const confirmMessage =
+      billCount > 0
+        ? `Are you sure you want to permanently delete client "${cust.name}" and all ${billCount} bill(s)? This cannot be undone.`
+        : `Are you sure you want to permanently delete client "${cust.name}"? This cannot be undone.`
+
+    if (!window.confirm(confirmMessage)) return
+
+    try {
+      setIsDeletingCustomer(cust.id)
+      const token = localStorage.getItem('adminToken')
+      const res = await fetch(`/api/admin/customers/${cust.id}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+
+      if (res.ok) {
+        const remaining = customers.filter((c) => c.id !== cust.id)
+        setCustomers(remaining)
+        setAllCustomers((prev) => prev.filter((c) => c.id !== cust.id))
+        if (selectedCustomerId === cust.id) {
+          setSelectedCustomerId(remaining.length > 0 ? remaining[0].id : null)
+        }
+      } else {
+        const errData = await res.json().catch(() => ({}))
+        alert(errData.message || 'Failed to delete customer')
+      }
+    } catch (err) {
+      console.error('Error deleting customer:', err)
+      alert('Error occurred while deleting customer')
+    } finally {
+      setIsDeletingCustomer(null)
+    }
+  }
+
+  const handleSaveCustomerEdit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!editCustomerId) return
+    const trimmedName = editCustomerName.trim()
+    const trimmedMobile = editCustomerMobile.trim()
+
+    if (!trimmedName) {
+      alert('Please enter a customer name')
+      return
+    }
+
+    try {
+      setIsSavingCustomer(true)
+      const token = localStorage.getItem('adminToken')
+      const res = await fetch(`/api/admin/customers/${editCustomerId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ name: trimmedName, mobile: trimmedMobile }),
+      })
+
+      if (res.ok) {
+        const data = await res.json()
+        const updated = data.customer
+
+        const updateList = (list: CustomerData[]) =>
+          list.map((c) => {
+            if (c.id !== editCustomerId) return c
+            return {
+              ...c,
+              name: updated.name,
+              mobile: updated.mobile,
+              invoices: c.invoices.map((inv) => ({
+                ...inv,
+                customerName: updated.name,
+                customerMobile: updated.mobile,
+              })),
+            }
+          })
+
+        setCustomers(updateList)
+        setAllCustomers(updateList)
+        setShowEditCustomerModal(false)
+      } else {
+        const errData = await res.json().catch(() => ({}))
+        alert(errData.message || 'Failed to update customer')
+      }
+    } catch (err) {
+      console.error('Error updating customer:', err)
+      alert('Error occurred while updating customer')
+    } finally {
+      setIsSavingCustomer(false)
     }
   }
 
@@ -386,9 +487,33 @@ export default function CustomerHistoryView() {
                       {selectedCustomer.name.charAt(0).toUpperCase()}
                     </span>
                     <div>
-                      <h3 className="text-xl font-extrabold text-gray-900">
-                        {selectedCustomer.name}
-                      </h3>
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h3 className="text-xl font-extrabold text-gray-900">
+                          {selectedCustomer.name}
+                        </h3>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setEditCustomerId(selectedCustomer.id)
+                            setEditCustomerName(selectedCustomer.name)
+                            setEditCustomerMobile(selectedCustomer.mobile || '')
+                            setShowEditCustomerModal(true)
+                          }}
+                          className="px-2.5 py-1 text-xs font-semibold text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 rounded-lg transition flex items-center gap-1 shadow-sm"
+                          title="Edit Customer Details"
+                        >
+                          <span>✏️</span> Edit
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteCustomer(selectedCustomer)}
+                          disabled={isDeletingCustomer === selectedCustomer.id}
+                          className="px-2.5 py-1 text-xs font-semibold text-red-700 bg-red-50 hover:bg-red-100 border border-red-200 rounded-lg transition flex items-center gap-1 shadow-sm disabled:opacity-50"
+                          title="Delete Client & All Invoices"
+                        >
+                          <span>🗑️</span> {isDeletingCustomer === selectedCustomer.id ? 'Deleting...' : 'Delete Client'}
+                        </button>
+                      </div>
                       <p className="text-xs sm:text-sm text-gray-600">
                         Mobile: {selectedCustomer.mobile || 'Not recorded'}
                       </p>
@@ -578,6 +703,76 @@ export default function CustomerHistoryView() {
           customers={customers}
           onClose={() => setShowShopReportModal(false)}
         />
+      )}
+
+      {/* Edit Customer Details Modal */}
+      {showEditCustomerModal && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-gray-100">
+            <div className="flex justify-between items-center pb-3 border-b border-gray-100">
+              <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                <span>✏️</span> Edit Client Details
+              </h3>
+              <button
+                type="button"
+                onClick={() => setShowEditCustomerModal(false)}
+                className="text-gray-400 hover:text-gray-600 text-xl font-bold p-1 leading-none"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleSaveCustomerEdit} className="mt-4 space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
+                  Customer / Business Name *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={editCustomerName}
+                  onChange={(e) => setEditCustomerName(e.target.value)}
+                  placeholder="e.g. Ramesh Patel"
+                  className="w-full px-3.5 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary text-sm font-semibold"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-gray-700 uppercase mb-1">
+                  Mobile Number (Optional)
+                </label>
+                <input
+                  type="text"
+                  value={editCustomerMobile}
+                  onChange={(e) => setEditCustomerMobile(e.target.value)}
+                  placeholder="e.g. 9876543210"
+                  className="w-full px-3.5 py-2.5 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-primary/20 focus:border-primary text-sm"
+                />
+              </div>
+
+              <div className="bg-amber-50 p-3 rounded-xl border border-amber-200 text-xs text-amber-800 leading-relaxed">
+                ℹ️ <strong>Note:</strong> Updating the customer name and phone here will automatically update all previous bills associated with this customer.
+              </div>
+
+              <div className="flex justify-end gap-2.5 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setShowEditCustomerModal(false)}
+                  className="px-4 py-2 text-sm font-semibold text-gray-600 hover:bg-gray-100 rounded-xl transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSavingCustomer}
+                  className="px-5 py-2 bg-primary hover:bg-secondary text-white text-sm font-bold rounded-xl transition shadow-sm disabled:opacity-50"
+                >
+                  {isSavingCustomer ? 'Saving...' : 'Save Changes'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
     </div>
   )
