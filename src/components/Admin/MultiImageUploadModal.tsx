@@ -7,6 +7,79 @@ interface MultiImageUploadModalProps {
   onSuccess: () => void
 }
 
+async function safelyOptimizeImage(file: File): Promise<File | Blob> {
+  // If file is already smaller than 1.2 MB, return it as-is
+  if (file.size <= 1.2 * 1024 * 1024) {
+    return file
+  }
+
+  // 3-second safety timeout so image processing NEVER hangs
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(file), 3000)
+
+    try {
+      const img = new Image()
+      const url = URL.createObjectURL(file)
+
+      img.onload = () => {
+        clearTimeout(timer)
+        URL.revokeObjectURL(url)
+
+        try {
+          const maxDimension = 1600
+          let w = img.naturalWidth || img.width
+          let h = img.naturalHeight || img.height
+
+          if (w > maxDimension || h > maxDimension) {
+            if (w > h) {
+              h = Math.round((h * maxDimension) / w)
+              w = maxDimension
+            } else {
+              w = Math.round((w * maxDimension) / h)
+              h = maxDimension
+            }
+          }
+
+          const canvas = document.createElement('canvas')
+          canvas.width = w
+          canvas.height = h
+          const ctx = canvas.getContext('2d')
+          if (!ctx) {
+            resolve(file)
+            return
+          }
+
+          ctx.drawImage(img, 0, 0, w, h)
+          canvas.toBlob(
+            (blob) => {
+              if (blob && blob.size < file.size) {
+                resolve(blob)
+              } else {
+                resolve(file)
+              }
+            },
+            'image/jpeg',
+            0.82
+          )
+        } catch {
+          resolve(file)
+        }
+      }
+
+      img.onerror = () => {
+        clearTimeout(timer)
+        URL.revokeObjectURL(url)
+        resolve(file)
+      }
+
+      img.src = url
+    } catch {
+      clearTimeout(timer)
+      resolve(file)
+    }
+  })
+}
+
 export default function MultiImageUploadModal({
   onClose,
   onSuccess,
@@ -14,6 +87,11 @@ export default function MultiImageUploadModal({
   const [selectedFiles, setSelectedFiles] = useState<File[]>([])
   const [previews, setPreviews] = useState<string[]>([])
   const [loading, setLoading] = useState(false)
+  const [uploadProgress, setUploadProgress] = useState<{
+    current: number
+    total: number
+    currentFileName?: string
+  } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [dragOver, setDragOver] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -57,58 +135,80 @@ export default function MultiImageUploadModal({
       return
     }
 
+    const token = localStorage.getItem('adminToken')
+    if (!token) {
+      setError('Admin session not found. Please log in again.')
+      setTimeout(() => {
+        window.location.href = '/admin'
+      }, 1500)
+      return
+    }
+
     setLoading(true)
     setError(null)
+    setUploadProgress({ current: 0, total: selectedFiles.length })
 
-    try {
-      const token = localStorage.getItem('adminToken')
-      if (!token) {
-        setError('Admin session not found. Please log in again.')
-        setTimeout(() => {
-          window.location.href = '/admin'
-        }, 1500)
-        return
+    let successCount = 0
+    const errors: string[] = []
+
+    // Upload each image one-by-one so you can upload as many as you want without hitting the 4.5MB cloud limit!
+    for (let i = 0; i < selectedFiles.length; i++) {
+      const file = selectedFiles[i]
+      setUploadProgress({
+        current: i + 1,
+        total: selectedFiles.length,
+        currentFileName: file.name,
+      })
+
+      try {
+        const optimized = await safelyOptimizeImage(file)
+        const formData = new FormData()
+        formData.append('images', optimized, file.name)
+
+        const response = await fetch('/api/gallery', {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+          body: formData,
+        })
+
+        if (response.ok) {
+          successCount++
+        } else {
+          if (response.status === 401) {
+            localStorage.removeItem('adminToken')
+            setError('Admin session expired. Redirecting to login...')
+            setTimeout(() => {
+              window.location.href = '/admin'
+            }, 1500)
+            setLoading(false)
+            setUploadProgress(null)
+            return
+          }
+          const errData = await response.json().catch(() => ({}))
+          errors.push(`${file.name}: ${errData.message || 'Upload failed'}`)
+        }
+      } catch (err: any) {
+        errors.push(`${file.name}: ${err?.message || 'Network error'}`)
       }
+    }
 
-      const formData = new FormData()
-      selectedFiles.forEach((file) => {
-        formData.append('images', file)
-      })
+    setLoading(false)
+    setUploadProgress(null)
 
-      const response = await fetch('/api/gallery', {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-        body: formData,
-      })
-
-      if (response.ok) {
-        // Clean up preview URLs
-        previews.forEach((url) => URL.revokeObjectURL(url))
-        onSuccess()
+    if (successCount > 0) {
+      previews.forEach((url) => URL.revokeObjectURL(url))
+      onSuccess()
+      if (errors.length === 0) {
         onClose()
       } else {
-        if (response.status === 401) {
-          localStorage.removeItem('adminToken')
-          setError('Admin session expired. Redirecting to login...')
-          setTimeout(() => {
-            window.location.href = '/admin'
-          }, 1500)
-          return
-        }
-        if (response.status === 413) {
-          setError('Selected files are too large for a single upload. Please upload 2-3 photos at a time.')
-          return
-        }
-        const data = await response.json().catch(() => ({}))
-        setError(data.message || `Upload failed (Status ${response.status})`)
+        setError(
+          `Uploaded ${successCount} of ${selectedFiles.length} images. Failed for: ${errors.join(', ')}`
+        )
       }
-    } catch (err: any) {
-      console.error('Upload error:', err)
-      setError(`An error occurred during upload: ${err?.message || 'Network error'}`)
-    } finally {
-      setLoading(false)
+    } else {
+      setError(`Upload failed: ${errors.join('; ')}`)
     }
   }
 
@@ -136,6 +236,33 @@ export default function MultiImageUploadModal({
         {error && (
           <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg">
             {error}
+          </div>
+        )}
+
+        {/* Live Upload Progress Indicator */}
+        {uploadProgress && (
+          <div className="mb-4 p-4 bg-orange-50 border border-orange-200 rounded-xl shadow-inner">
+            <div className="flex justify-between text-xs font-bold text-orange-950 mb-1.5">
+              <span>
+                Uploading image {uploadProgress.current} of {uploadProgress.total}...
+              </span>
+              <span>
+                {Math.round((uploadProgress.current / uploadProgress.total) * 100)}%
+              </span>
+            </div>
+            <div className="w-full bg-orange-200 h-2.5 rounded-full overflow-hidden">
+              <div
+                className="bg-primary h-full transition-all duration-300 rounded-full"
+                style={{
+                  width: `${(uploadProgress.current / uploadProgress.total) * 100}%`,
+                }}
+              />
+            </div>
+            {uploadProgress.currentFileName && (
+              <p className="text-[11px] text-gray-500 mt-1.5 truncate">
+                File: {uploadProgress.currentFileName}
+              </p>
+            )}
           </div>
         )}
 
@@ -239,7 +366,14 @@ export default function MultiImageUploadModal({
             disabled={loading || selectedFiles.length === 0}
             className="flex-1 px-4 py-2.5 bg-primary text-white font-semibold rounded-lg hover:bg-secondary transition disabled:opacity-50 flex items-center justify-center gap-2"
           >
-            {loading ? (
+            {loading && uploadProgress ? (
+              <>
+                <span className="animate-spin text-lg">⏳</span>
+                <span>
+                  Uploading {uploadProgress.current}/{uploadProgress.total}...
+                </span>
+              </>
+            ) : loading ? (
               <>
                 <span className="animate-spin text-lg">⏳</span> Uploading...
               </>
