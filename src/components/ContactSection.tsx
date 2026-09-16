@@ -31,18 +31,21 @@ export default function ContactSection() {
           </p>
         </div>
 
-        <div className="grid md:grid-cols-3 gap-6 mb-12">
+        <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6 mb-12">
           {/* Direct Phone / Call */}
           <a
             href="tel:6353016927"
-            className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 hover:shadow-md transition text-center flex flex-col items-center justify-center group"
+            className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 hover:shadow-md transition text-center flex flex-col items-center justify-center group hover:border-amber-300"
           >
             <div className="w-14 h-14 bg-amber-100 text-amber-800 rounded-full flex items-center justify-center text-2xl mb-4 group-hover:scale-110 transition-transform">
               📞
             </div>
             <h3 className="text-lg font-bold text-gray-800 mb-1">Direct Call</h3>
             <p className="text-primary font-extrabold text-base">6353016927</p>
-            <p className="text-xs text-gray-500 mt-1">Mon - Sun (Business Hours)</p>
+            <p className="text-xs font-bold text-gray-700 mt-1">Owner: Vivek Ghediya</p>
+            <span className="mt-3 inline-flex items-center gap-1 text-xs font-bold text-amber-700 bg-amber-50 px-3 py-1 rounded-full group-hover:bg-amber-600 group-hover:text-white transition">
+              Call Now ↗
+            </span>
           </a>
 
           {/* WhatsApp Direct */}
@@ -58,22 +61,55 @@ export default function ContactSection() {
             <h3 className="text-lg font-bold text-gray-800 mb-1">WhatsApp Chat</h3>
             <p className="text-green-600 font-extrabold text-base">Chat on WhatsApp</p>
             <p className="text-xs text-gray-500 mt-1">Instant photo sharing &amp; quotes</p>
+            <span className="mt-3 inline-flex items-center gap-1 text-xs font-bold text-green-700 bg-green-50 px-3 py-1 rounded-full group-hover:bg-green-600 group-hover:text-white transition">
+              Open WhatsApp ↗
+            </span>
           </a>
 
-          {/* Workshop Address */}
-          <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 text-center flex flex-col items-center justify-center">
-            <div className="w-14 h-14 bg-blue-100 text-blue-700 rounded-full flex items-center justify-center text-2xl mb-4">
+          {/* Workshop Address with Google Maps Redirection */}
+          <a
+            href="https://maps.google.com/?q=21°39'33.9%22N+69°36'22.1%22E"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 hover:shadow-md transition text-center flex flex-col items-center justify-center group hover:border-blue-300 cursor-pointer"
+            title="Open Workshop Location in Google Maps"
+          >
+            <div className="w-14 h-14 bg-blue-100 text-blue-700 rounded-full flex items-center justify-center text-2xl mb-4 group-hover:scale-110 transition-transform">
               📍
             </div>
             <h3 className="text-lg font-bold text-gray-800 mb-1">Workshop Address</h3>
             <p className="text-xs text-gray-600 leading-relaxed font-medium">
-              Porbandar Khambhaliya highway bokhira,
+              Porbandar Khambhaliya highway,
               <br />
               Near Vachhrajdada Temple,
               <br />
               Bokhira, Porbandar 360575
             </p>
-          </div>
+            <span className="mt-3 inline-flex items-center gap-1 text-xs font-bold text-blue-600 bg-blue-50 px-3 py-1 rounded-full group-hover:bg-blue-600 group-hover:text-white transition">
+              📍 View on Google Maps ↗
+            </span>
+          </a>
+
+          {/* Instagram Showcase */}
+          <a
+            href="https://www.instagram.com/jay_mataji_truck_body_builder/?hl=en"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 hover:shadow-md transition text-center flex flex-col items-center justify-center group hover:border-pink-300 cursor-pointer"
+            title="Follow on Instagram"
+          >
+            <div className="w-14 h-14 bg-gradient-to-tr from-amber-400 via-rose-500 to-purple-600 text-white rounded-full flex items-center justify-center text-2xl mb-4 group-hover:scale-110 transition-transform shadow-sm">
+              📸
+            </div>
+            <h3 className="text-lg font-bold text-gray-800 mb-1">Instagram</h3>
+            <p className="text-pink-600 font-extrabold text-xs truncate max-w-full">
+              @jay_mataji_truck_body_builder
+            </p>
+            <p className="text-xs text-gray-500 mt-1">Truck artwork &amp; fittings</p>
+            <span className="mt-3 inline-flex items-center gap-1 text-xs font-bold text-pink-600 bg-pink-50 px-3 py-1 rounded-full group-hover:bg-pink-600 group-hover:text-white transition">
+              Follow Profile ↗
+            </span>
+          </a>
         </div>
 
         {/* Instant Quote / Message via WhatsApp Form */}

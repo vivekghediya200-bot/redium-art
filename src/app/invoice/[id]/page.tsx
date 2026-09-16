@@ -12,6 +12,9 @@ interface InvoiceData {
   customerName: string
   customerMobile?: string
   date: string
+  businessOwner?: string
+  paymentStatus?: 'PAID' | 'PENDING'
+  paymentMethod?: 'CASH' | 'UPI' | 'CARD'
   items: Array<{
     sr: number
     description: string
@@ -283,16 +286,53 @@ ${downloadUrl}
               <div className="text-xs font-bold text-gray-600">
                 Date: <span className="text-gray-900">{invoice.date}</span>
               </div>
+              <div className="mt-1">
+                {invoice.paymentStatus === 'PAID' ? (
+                  <span className="inline-block px-2.5 py-0.5 rounded-full text-[11px] font-black bg-emerald-100 text-emerald-800 border border-emerald-300">
+                    ✓ PAID ({invoice.paymentMethod || 'UPI'})
+                  </span>
+                ) : (
+                  <span className="inline-block px-2.5 py-0.5 rounded-full text-[11px] font-black bg-amber-100 text-amber-800 border border-amber-300">
+                    ⏳ PENDING
+                  </span>
+                )}
+              </div>
             </div>
           </div>
 
           {/* Shop Bar */}
           <div className="flex justify-between text-xs text-gray-700 py-2.5 border-b border-gray-200">
             <div>
-              <strong>Mobile No.:</strong> <span className="font-extrabold text-gray-900">6353016927</span>
+              <div>
+                <strong>Mobile No.:</strong> <span className="font-extrabold text-gray-900">6353016927</span>
+              </div>
+              <div className="mt-0.5">
+                <strong>Owner:</strong> <span className="font-bold text-gray-900">Vivek Ghediya</span>
+              </div>
             </div>
             <div className="text-right max-w-md">
-              <strong>Address:</strong> Porbandar Khambhaliya highway, Near Vachhrajdada Temple, Bokhira, Porbandar - 360575
+              <div>
+                <strong>Address:</strong>{' '}
+                <a
+                  href="https://maps.google.com/?q=21°39'33.9%22N+69°36'22.1%22E"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-gray-700 hover:text-blue-600 hover:underline"
+                  title="View Workshop on Google Maps"
+                >
+                  Porbandar Khambhaliya highway, Near Vachhrajdada Temple, Bokhira, Porbandar - 360575 📍
+                </a>
+              </div>
+              <div className="mt-0.5 text-pink-600 font-bold">
+                <a
+                  href="https://www.instagram.com/jay_mataji_truck_body_builder/?hl=en"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="hover:underline"
+                >
+                  📸 Instagram: @jay_mataji_truck_body_builder
+                </a>
+              </div>
             </div>
           </div>
 
@@ -349,6 +389,9 @@ ${downloadUrl}
               <p>1. Goods once sold will not be taken back or exchanged.</p>
               <p>2. Payment strictly upon completion of fitment or delivery.</p>
               <p className="mt-2 text-primary font-bold">🙏 Jay Mataji • Visit Again!</p>
+              <p className="mt-1 text-pink-600 font-bold text-[11px]">
+                📸 Instagram: <a href="https://www.instagram.com/jay_mataji_truck_body_builder/?hl=en" target="_blank" rel="noopener noreferrer" className="underline">@jay_mataji_truck_body_builder</a>
+              </p>
             </div>
 
             <div className="text-center w-48">

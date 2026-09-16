@@ -406,14 +406,27 @@ export default function CustomerReportModal({
             }}
           >
             <div>
-              <strong>Mobile No.:</strong>{' '}
-              <span style={{ fontWeight: '800', color: '#111827' }}>
-                6353016927
-              </span>
+              <div>
+                <strong>Mobile No.:</strong>{' '}
+                <span style={{ fontWeight: '800', color: '#111827' }}>
+                  6353016927
+                </span>
+              </div>
+              <div style={{ marginTop: '2px' }}>
+                <strong>Owner:</strong>{' '}
+                <span style={{ fontWeight: '700', color: '#111827' }}>
+                  Vivek Ghediya
+                </span>
+              </div>
             </div>
             <div style={{ textAlign: 'right', maxWidth: '440px' }}>
-              <strong>Address:</strong> Porbandar Khambhaliya highway, Near
-              Vachhrajdada Temple, Bokhira, Porbandar - 360575
+              <div>
+                <strong>Address:</strong> Porbandar Khambhaliya highway, Near
+                Vachhrajdada Temple, Bokhira, Porbandar - 360575
+              </div>
+              <div style={{ marginTop: '2px', color: '#db2777', fontWeight: '700', fontSize: '11px' }}>
+                📸 Instagram: @jay_mataji_truck_body_builder
+              </div>
             </div>
           </div>
         </div>

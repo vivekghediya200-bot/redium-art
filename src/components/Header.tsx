@@ -28,12 +28,21 @@ export default function Header() {
         </Link>
 
         {/* Desktop Menu */}
-        <div className="hidden md:flex items-center gap-6">
+        <div className="hidden md:flex items-center gap-5">
           <a
             href="tel:6353016927"
             className="text-xs font-bold text-gray-700 hover:text-primary flex items-center gap-1.5 bg-gray-50 px-3 py-1.5 rounded-lg border border-gray-200 transition"
           >
             <span>📞</span> 6353016927
+          </a>
+          <a
+            href="https://www.instagram.com/jay_mataji_truck_body_builder/?hl=en"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-xs font-bold text-pink-600 hover:text-pink-700 flex items-center gap-1.5 bg-pink-50 px-3 py-1.5 rounded-lg border border-pink-200 transition"
+            title="Follow on Instagram"
+          >
+            <span>📸</span> Instagram
           </a>
           <Link
             href="#gallery"
@@ -72,6 +81,15 @@ export default function Header() {
               className="text-sm font-bold text-gray-800 flex items-center gap-2 py-2"
             >
               <span>📞</span> Call: 6353016927
+            </a>
+            <a
+              href="https://www.instagram.com/jay_mataji_truck_body_builder/?hl=en"
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={() => setIsOpen(false)}
+              className="text-sm font-bold text-pink-600 flex items-center gap-2 py-2"
+            >
+              <span>📸</span> Instagram: @jay_mataji_truck_body_builder
             </a>
             <Link
               href="#gallery"

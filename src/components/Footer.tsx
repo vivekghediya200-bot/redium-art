@@ -24,9 +24,15 @@ export default function Footer() {
             <p className="text-xs sm:text-sm text-gray-400 max-w-md leading-relaxed mb-4">
               Specialized in artistic redium works, commercial vehicle &amp; truck show styling, custom decals, reflective tape fitting, and bespoke signage.
             </p>
-            <p className="text-xs text-gray-500">
-              📍 Porbandar Khambhaliya highway bokhira, Near Vachhrajdada Temple, Porbandar 360575
-            </p>
+            <a
+              href="https://maps.google.com/?q=21°39'33.9%22N+69°36'22.1%22E"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-xs text-gray-500 hover:text-amber-400 transition inline-block leading-relaxed"
+              title="Open Workshop in Google Maps"
+            >
+              📍 Porbandar Khambhaliya highway bokhira, Near Vachhrajdada Temple, Porbandar 360575 ↗
+            </a>
           </div>
 
           {/* Quick Links */}
@@ -44,6 +50,16 @@ export default function Footer() {
                 </a>
               </li>
               <li>
+                <a
+                  href="https://www.instagram.com/jay_mataji_truck_body_builder/?hl=en"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="hover:text-pink-400 transition text-pink-400 font-medium"
+                >
+                  📸 Official Instagram
+                </a>
+              </li>
+              <li>
                 <a href="/admin" className="hover:text-amber-400 transition">
                   Admin Login
                 </a>
@@ -54,6 +70,9 @@ export default function Footer() {
           {/* Contact Details */}
           <div>
             <h4 className="text-white font-bold text-sm mb-3">Direct Contact</h4>
+            <p className="text-xs sm:text-sm mb-2 text-gray-300">
+              👤 Owner: <span className="font-bold text-white">Vivek Ghediya</span>
+            </p>
             <p className="text-xs sm:text-sm mb-2 text-gray-300">
               📞 Phone:{' '}
               <a href="tel:6353016927" className="text-amber-400 font-bold hover:underline">
@@ -69,6 +88,17 @@ export default function Footer() {
                 className="text-green-400 font-semibold hover:underline"
               >
                 Chat on WhatsApp
+              </a>
+            </p>
+            <p className="text-xs sm:text-sm mb-2">
+              📸 Instagram:{' '}
+              <a
+                href="https://www.instagram.com/jay_mataji_truck_body_builder/?hl=en"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-pink-400 font-semibold hover:underline"
+              >
+                @jay_mataji_truck_body_builder
               </a>
             </p>
             <p className="text-xs text-gray-500 mt-2">

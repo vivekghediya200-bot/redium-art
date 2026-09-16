@@ -56,7 +56,7 @@ export async function POST(request: NextRequest) {
   try {
     await initializeDatabase()
     const body = await request.json()
-    const { customerName, customerMobile, date, items, notes } = body
+    const { customerName, customerMobile, date, items, notes, paymentStatus, paymentMethod } = body
 
     if (!customerName || !customerName.trim()) {
       return NextResponse.json(
@@ -78,6 +78,8 @@ export async function POST(request: NextRequest) {
       date,
       items,
       notes,
+      paymentStatus,
+      paymentMethod,
     })
 
     return NextResponse.json(

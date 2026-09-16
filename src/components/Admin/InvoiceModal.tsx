@@ -79,6 +79,12 @@ export default function InvoiceModal({
       ? existingInvoice.date
       : new Date().toISOString().split('T')[0]
   )
+  const [paymentStatus, setPaymentStatus] = useState<'PAID' | 'PENDING'>(
+    existingInvoice?.paymentStatus || 'PAID'
+  )
+  const [paymentMethod, setPaymentMethod] = useState<'CASH' | 'UPI' | 'CARD'>(
+    existingInvoice?.paymentMethod || 'UPI'
+  )
   const [items, setItems] = useState<InvoiceItemForm[]>(
     existingInvoice && existingInvoice.items?.length > 0
       ? existingInvoice.items
@@ -402,18 +408,25 @@ export default function InvoiceModal({
     const origin = typeof window !== 'undefined' ? window.location.origin : ''
     const pdfUrl = `${origin}/invoice/${billId}`
 
+    const paymentLine = paymentStatus === 'PAID'
+      ? `💳 *Payment:* PAID (${paymentMethod})`
+      : `⏳ *Payment:* PENDING`
+
     const message = `📄 *OFFICIAL INVOICE PDF: ${billId}*
 👤 *Customer:* ${customerName}
 💰 *Grand Total:* ₹${grandTotal.toLocaleString('en-IN', {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     })}
+${paymentLine}
 
 📥 *Download / View Official PDF Invoice:*
 ${pdfUrl}
 
 🙏 *Jay Mataji Redium Art & Truck Show Fitting*
-📍 Porbandar | 📞 Contact: 6353016927`
+👤 *Owner:* Vivek Ghediya | 📞 Contact: 6353016927
+📸 *Instagram:* https://www.instagram.com/jay_mataji_truck_body_builder/?hl=en
+📍 *Location:* https://maps.google.com/?q=21°39'33.9%22N+69°36'22.1%22E`
 
     let phone = (customerMobile || '').replace(/\D/g, '')
     if (phone.length === 10) {
@@ -438,23 +451,16 @@ ${pdfUrl}
         }, 'image/png')
       }
     } catch (e) {
-      console.warn('Clipboard image preparation warning:', e)
+      console.warn('Clipboard image copy error:', e)
     }
 
-    // 5. Open WhatsApp Application
-    const waAppUrl = phone
-      ? `whatsapp://send?phone=${phone}&text=${encodeURIComponent(message)}`
-      : `whatsapp://send?text=${encodeURIComponent(message)}`
+    // 5. Open WhatsApp directly with the customer phone and clean message
+    const waUrl = phone
+      ? `https://api.whatsapp.com/send?phone=${phone}&text=${encodeURIComponent(message)}`
+      : `https://api.whatsapp.com/send?text=${encodeURIComponent(message)}`
 
-    const waLink = document.createElement('a')
-    waLink.href = waAppUrl
-    document.body.appendChild(waLink)
-    waLink.click()
-    document.body.removeChild(waLink)
-
-    setShareNotice(
-      `✅ Actual PDF saved to your folder as "${savedPdfName}"! WhatsApp opened with your direct PDF download link. In WhatsApp, press Ctrl+V to also send the bill image, or attach the saved PDF!`
-    )
+    window.open(waUrl, '_blank')
+    setShareNotice(`✅ Official invoice link prepared! Paste into WhatsApp chat.`)
   }
 
   const handleSave = async () => {
@@ -498,6 +504,8 @@ ${pdfUrl}
           customerName: customerName.trim(),
           customerMobile: customerMobile.trim(),
           date,
+          paymentStatus,
+          paymentMethod: paymentStatus === 'PENDING' ? undefined : paymentMethod,
           items: validItems.map((it) => ({
             description: it.description.trim(),
             qty: Number(it.qty) || 1,
@@ -675,6 +683,45 @@ ${pdfUrl}
                   {date}
                 </span>
               </div>
+              <div
+                style={{
+                  fontSize: '11px',
+                  fontWeight: '800',
+                  marginTop: '5px',
+                }}
+              >
+                {paymentStatus === 'PAID' ? (
+                  <span
+                    style={{
+                      display: 'inline-block',
+                      padding: '2px 8px',
+                      borderRadius: '4px',
+                      backgroundColor: '#dcfce7',
+                      color: '#15803d',
+                      border: '1px solid #86efac',
+                      fontSize: '10px',
+                      fontWeight: '800',
+                    }}
+                  >
+                    ✓ PAID ({paymentMethod})
+                  </span>
+                ) : (
+                  <span
+                    style={{
+                      display: 'inline-block',
+                      padding: '2px 8px',
+                      borderRadius: '4px',
+                      backgroundColor: '#fef3c7',
+                      color: '#b45309',
+                      border: '1px solid #fcd34d',
+                      fontSize: '10px',
+                      fontWeight: '800',
+                    }}
+                  >
+                    ⏳ PENDING
+                  </span>
+                )}
+              </div>
             </div>
           </div>
 
@@ -691,14 +738,27 @@ ${pdfUrl}
             }}
           >
             <div>
-              <strong>Mobile No.:</strong>{' '}
-              <span style={{ fontWeight: '800', color: '#111827' }}>
-                6353016927
-              </span>
+              <div>
+                <strong>Mobile No.:</strong>{' '}
+                <span style={{ fontWeight: '800', color: '#111827' }}>
+                  6353016927
+                </span>
+              </div>
+              <div style={{ marginTop: '2px' }}>
+                <strong>Owner:</strong>{' '}
+                <span style={{ fontWeight: '700', color: '#111827' }}>
+                  Vivek Ghediya
+                </span>
+              </div>
             </div>
             <div style={{ textAlign: 'right', maxWidth: '440px' }}>
-              <strong>Address:</strong> Porbandar Khambhaliya highway, Near
-              Vachhrajdada Temple, Bokhira, Porbandar - 360575
+              <div>
+                <strong>Address:</strong> Porbandar Khambhaliya highway, Near
+                Vachhrajdada Temple, Bokhira, Porbandar - 360575
+              </div>
+              <div style={{ marginTop: '2px', color: '#db2777', fontWeight: '700', fontSize: '11px' }}>
+                📸 Instagram: @jay_mataji_truck_body_builder
+              </div>
             </div>
           </div>
         </div>
@@ -1110,6 +1170,12 @@ ${pdfUrl}
                     <p className="text-[10px] text-primary font-bold uppercase tracking-wider">
                       Porbandar, Gujarat • 6353016927
                     </p>
+                    <p className="text-xs text-gray-700 font-bold mt-0.5">
+                      Owner: <span className="text-gray-900 font-extrabold">Vivek Ghediya</span>
+                    </p>
+                    <p className="text-[11px] text-pink-600 font-semibold mt-0.5">
+                      📸 @jay_mataji_truck_body_builder
+                    </p>
                   </div>
                 </div>
 
@@ -1131,12 +1197,23 @@ ${pdfUrl}
                       Bill No: {existingInvoice.id}
                     </p>
                   )}
+                  <div className="mt-1.5">
+                    {paymentStatus === 'PAID' ? (
+                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-black bg-emerald-100 text-emerald-800 border border-emerald-300 shadow-sm">
+                        ✓ PAID ({paymentMethod})
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-black bg-amber-100 text-amber-800 border border-amber-300 shadow-sm">
+                        ⏳ PENDING
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
             </div>
 
             {/* Customer Input Fields */}
-            <div className="grid sm:grid-cols-2 gap-3 mb-5 bg-gray-50 p-3.5 rounded-xl border border-gray-200">
+            <div className="grid sm:grid-cols-2 gap-3 mb-4 bg-gray-50 p-3.5 rounded-xl border border-gray-200">
               <div ref={customerInputRef} className="relative">
                 <label className="block text-xs font-bold uppercase text-gray-700 mb-1">
                   Customer Name:
@@ -1191,6 +1268,66 @@ ${pdfUrl}
                   onChange={(e) => setCustomerMobile(e.target.value)}
                   className="w-full font-semibold text-gray-900 border border-gray-300 rounded-lg px-3 py-1.5 focus:border-primary focus:outline-none text-sm bg-white"
                 />
+              </div>
+            </div>
+
+            {/* Payment Status & Payment Method Selectors */}
+            <div className="mb-4 bg-gray-50 p-3.5 rounded-xl border border-gray-200 shadow-sm">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <span className="block text-xs font-bold uppercase text-gray-700 mb-1.5">
+                    Bill Payment Status:
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setPaymentStatus('PAID')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
+                        paymentStatus === 'PAID'
+                          ? 'bg-emerald-600 text-white shadow-sm ring-2 ring-emerald-400'
+                          : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-100'
+                      }`}
+                    >
+                      <span>✓</span> Paid
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPaymentStatus('PENDING')}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1.5 ${
+                        paymentStatus === 'PENDING'
+                          ? 'bg-amber-500 text-white shadow-sm ring-2 ring-amber-300'
+                          : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-100'
+                      }`}
+                    >
+                      <span>⏳</span> Pending
+                    </button>
+                  </div>
+                </div>
+
+                {paymentStatus === 'PAID' && (
+                  <div>
+                    <span className="block text-xs font-bold uppercase text-gray-700 mb-1.5">
+                      Payment Method:
+                    </span>
+                    <div className="flex items-center gap-2">
+                      {(['UPI', 'CASH', 'CARD'] as const).map((method) => (
+                        <button
+                          key={method}
+                          type="button"
+                          onClick={() => setPaymentMethod(method)}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-bold transition flex items-center gap-1 ${
+                            paymentMethod === method
+                              ? 'bg-sky-700 text-white shadow-sm ring-2 ring-sky-400'
+                              : 'bg-white text-gray-700 border border-gray-300 hover:bg-gray-100'
+                          }`}
+                        >
+                          <span>{method === 'UPI' ? '📱' : method === 'CASH' ? '💵' : '💳'}</span>
+                          <span>{method}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
 

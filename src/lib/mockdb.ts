@@ -121,6 +121,9 @@ export interface Invoice {
   businessName: string
   businessMobile: string
   businessAddress: string
+  businessOwner?: string
+  paymentStatus?: 'PAID' | 'PENDING'
+  paymentMethod?: 'CASH' | 'UPI' | 'CARD'
   items: InvoiceItem[]
   subtotal: number
   grandTotal: number
@@ -421,6 +424,8 @@ export function createInvoice(data: {
   date?: string
   items: Array<{ description: string; qty: number; rate: number }>
   notes?: string
+  paymentStatus?: 'PAID' | 'PENDING'
+  paymentMethod?: 'CASH' | 'UPI' | 'CARD'
 }): Invoice {
   const customer = findOrCreateCustomer(data.customerName, data.customerMobile)
   const invoices = getAllInvoices()
@@ -461,8 +466,11 @@ export function createInvoice(data: {
     date: data.date || new Date().toISOString().split('T')[0],
     businessName: 'JAY MATAJI REDIUM ART & TRUCK SHOW FITTING',
     businessMobile: '6353016927',
+    businessOwner: 'Vivek Ghediya',
     businessAddress:
       'Porbandar Khambhaliya highway bokhira, Near Vachhrajdada Temple Bokhira Porbandar 360575',
+    paymentStatus: data.paymentStatus || 'PAID',
+    paymentMethod: data.paymentStatus === 'PENDING' ? undefined : (data.paymentMethod || 'UPI'),
     items,
     subtotal,
     grandTotal,
@@ -484,6 +492,8 @@ export function updateInvoice(
     date?: string
     items?: Array<{ description: string; qty: number; rate: number }>
     notes?: string
+    paymentStatus?: 'PAID' | 'PENDING'
+    paymentMethod?: 'CASH' | 'UPI' | 'CARD'
   }
 ): Invoice | null {
   const invoices = getAllInvoices()
@@ -526,6 +536,9 @@ export function updateInvoice(
     subtotal,
     grandTotal,
     notes: data.notes !== undefined ? data.notes : existing.notes,
+    businessOwner: existing.businessOwner || 'Vivek Ghediya',
+    paymentStatus: data.paymentStatus !== undefined ? data.paymentStatus : (existing.paymentStatus || 'PAID'),
+    paymentMethod: data.paymentStatus === 'PENDING' ? undefined : (data.paymentMethod !== undefined ? data.paymentMethod : (existing.paymentMethod || 'UPI')),
     updatedAt: new Date().toISOString(),
   }
 

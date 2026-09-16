@@ -24,6 +24,8 @@ export interface CustomerData {
       total: number
     }>
     grandTotal: number
+    paymentStatus?: 'PAID' | 'PENDING'
+    paymentMethod?: 'CASH' | 'UPI' | 'CARD'
   }>
 }
 
@@ -593,6 +595,15 @@ export default function CustomerHistoryView() {
                             <span className="font-bold text-gray-800 text-sm">
                               Date: {inv.date}
                             </span>
+                            {inv.paymentStatus === 'PAID' ? (
+                              <span className="text-[11px] bg-emerald-100 text-emerald-800 border border-emerald-300 px-2 py-0.5 rounded font-extrabold flex items-center gap-0.5">
+                                <span>✓</span> PAID ({inv.paymentMethod || 'UPI'})
+                              </span>
+                            ) : (
+                              <span className="text-[11px] bg-amber-100 text-amber-800 border border-amber-300 px-2 py-0.5 rounded font-extrabold flex items-center gap-0.5">
+                                <span>⏳</span> PENDING
+                              </span>
+                            )}
                             {idx === 0 && (
                               <span className="text-[11px] bg-green-100 text-green-700 px-2 py-0.5 rounded font-semibold">
                                 Latest Visit
