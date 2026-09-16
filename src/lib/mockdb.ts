@@ -206,15 +206,34 @@ function initializeFiles(): void {
    GALLERY (Multi-Image Showcase)
    ========================================================= */
 
+let inMemoryGalleryCache: GalleryItem[] | null = null
+let inMemoryGalleryMtime = 0
+
 export function getAllGalleryImages(): GalleryItem[] {
   try {
     initializeFiles()
-    if (!fs.existsSync(GALLERY_FILE)) return []
+    let currentMtime = 0
+    try {
+      if (fs.existsSync(GALLERY_FILE)) {
+        currentMtime = fs.statSync(GALLERY_FILE).mtimeMs
+      }
+    } catch {}
+
+    if (inMemoryGalleryCache && inMemoryGalleryMtime === currentMtime && currentMtime > 0) {
+      return inMemoryGalleryCache
+    }
+
     const data = safeReadFile(GALLERY_FILE)
-    return JSON.parse(data)
+    const parsed = JSON.parse(data)
+    if (Array.isArray(parsed)) {
+      inMemoryGalleryCache = parsed
+      inMemoryGalleryMtime = currentMtime
+      return parsed
+    }
+    return []
   } catch (error) {
     console.error('Error reading gallery:', error)
-    return []
+    return inMemoryGalleryCache || []
   }
 }
 
@@ -226,6 +245,7 @@ export function addGalleryImages(images: string[]): GalleryItem[] {
     createdAt: new Date().toISOString(),
   }))
   const updated = [...newItems, ...current]
+  inMemoryGalleryCache = updated
   safeWriteFile(GALLERY_FILE, JSON.stringify(updated))
   return newItems
 }
@@ -234,6 +254,7 @@ export function deleteGalleryImage(id: string): boolean {
   const current = getAllGalleryImages()
   const filtered = current.filter((item) => item.id !== id)
   if (filtered.length === current.length) return false
+  inMemoryGalleryCache = filtered
   return safeWriteFile(GALLERY_FILE, JSON.stringify(filtered))
 }
 
@@ -242,6 +263,7 @@ export function deleteMultipleGalleryImages(ids: string[]): number {
   const idSet = new Set(ids)
   const filtered = current.filter((item) => !idSet.has(item.id))
   const removedCount = current.length - filtered.length
+  inMemoryGalleryCache = filtered
   safeWriteFile(GALLERY_FILE, JSON.stringify(filtered))
   return removedCount
 }

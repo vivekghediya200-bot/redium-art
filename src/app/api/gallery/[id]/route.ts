@@ -10,6 +10,9 @@ function checkAuth(request: NextRequest) {
   return verifyToken(token)
 }
 
+export const dynamic = 'force-dynamic'
+export const revalidate = 0
+
 export async function DELETE(
   request: NextRequest,
   { params }: { params: { id: string } }

@@ -14,7 +14,10 @@ function checkAuth(request: NextRequest) {
   return verifyToken(token)
 }
 
-// Public GET for gallery items with pagination and CDN edge caching
+export const dynamic = 'force-dynamic'
+export const revalidate = 0
+
+// Public GET for gallery items (strictly live data, no stale caching)
 export async function GET(request: NextRequest) {
   try {
     await initializeDatabase()
@@ -36,7 +39,9 @@ export async function GET(request: NextRequest) {
       status: 200,
       headers: {
         'Content-Type': 'application/json',
-        'Cache-Control': 'public, s-maxage=1800, stale-while-revalidate=86400',
+        'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+        Pragma: 'no-cache',
+        Expires: '0',
       },
     })
   } catch (error) {

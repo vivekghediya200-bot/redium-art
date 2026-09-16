@@ -20,8 +20,12 @@ export default function Gallery() {
   const fetchGallery = async () => {
     try {
       setLoading(true)
+      const now = Date.now()
       // 1. Fetch first 15 images for instantaneous (<300ms) initial render
-      const response = await fetch('/api/gallery?limit=15&page=1')
+      const response = await fetch(`/api/gallery?limit=15&page=1&t=${now}`, {
+        cache: 'no-store',
+        headers: { 'Cache-Control': 'no-cache' },
+      })
       if (response.ok) {
         const data = await response.json()
         if (Array.isArray(data) && data.length > 0) {
@@ -29,10 +33,13 @@ export default function Gallery() {
           setLoading(false)
 
           // 2. Fetch remaining images smoothly in the background without UI delay
-          fetch('/api/gallery')
+          fetch(`/api/gallery?t=${Date.now()}`, {
+            cache: 'no-store',
+            headers: { 'Cache-Control': 'no-cache' },
+          })
             .then((res) => (res.ok ? res.json() : []))
             .then((allData) => {
-              if (Array.isArray(allData) && allData.length > data.length) {
+              if (Array.isArray(allData) && allData.length >= data.length) {
                 setItems(allData)
               }
             })
@@ -42,7 +49,10 @@ export default function Gallery() {
       }
 
       // Fallback if limit param wasn't returned
-      const fallback = await fetch('/api/gallery')
+      const fallback = await fetch(`/api/gallery?t=${Date.now()}`, {
+        cache: 'no-store',
+        headers: { 'Cache-Control': 'no-cache' },
+      })
       if (fallback.ok) {
         const full = await fallback.json()
         setItems(full)
