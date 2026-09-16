@@ -353,7 +353,7 @@ export default function InvoiceModal({
     }
   }
 
-  // Share Directly to WhatsApp with pre-filled manual bill & selected folder PDF save
+  // Share Actual PDF to WhatsApp (Web Share API with actual PDF file attachment & direct PDF link)
   const handleShareWhatsApp = async () => {
     if (!customerName.trim()) {
       setError('Please provide customer name')
@@ -362,57 +362,65 @@ export default function InvoiceModal({
 
     setShareNotice(null)
 
-    // 1. Prompt folder selector and save PDF first!
+    // 1. Generate the actual PDF blob first
     let savedPdfName = ''
+    let pdfBlob: Blob | null = null
     try {
       const result = await handleDownloadPDF()
       if (result) {
         savedPdfName = result.fileName
+        pdfBlob = result.blob
       }
     } catch (pdfErr) {
       console.error('Error generating PDF for WhatsApp share:', pdfErr)
     }
 
-    // 2. Format detailed manual bill text for WhatsApp
-    const billId = existingInvoice?.id || 'NEW_BILL'
-    const validItems = items.filter(
-      (it) => it.description && it.description.trim() !== ''
-    )
+    const billId = existingInvoice?.id || 'BILL'
 
-    const itemsText = validItems
-      .map(
-        (it, i) =>
-          `${i + 1}. *${it.description}*\n   Qty: ${it.qty} × ₹${Number(
-            it.rate
-          ).toFixed(2)} = ₹${Number(it.total).toFixed(2)}`
-      )
-      .join('\n')
+    // 2. If Web Share API supports sending actual PDF files, send the real PDF file directly!
+    if (pdfBlob && typeof navigator !== 'undefined' && navigator.canShare) {
+      try {
+        const pdfFile = new File([pdfBlob], savedPdfName || `${billId}.pdf`, {
+          type: 'application/pdf',
+        })
+        if (navigator.canShare({ files: [pdfFile] })) {
+          await navigator.share({
+            files: [pdfFile],
+            title: `Official Invoice ${billId}`,
+            text: `Official PDF Invoice ${billId} - Jay Mataji Redium Art`,
+          })
+          setShareNotice(`✅ Actual PDF file attached and sent to WhatsApp!`)
+          return
+        }
+      } catch (shareErr: any) {
+        if (shareErr.name === 'AbortError') return
+        console.warn('Native share failed or cancelled, falling back to direct WhatsApp link:', shareErr)
+      }
+    }
 
-    const message = `🧾 *JAY MATAJI REDIUM ART & TRUCK SHOW FITTING*
-📍 Porbandar Khambhaliya highway bokhira, Near Vachhrajdada Temple, Porbandar 360575
-📞 Contact: 6353016927
-━━━━━━━━━━━━━━━━━━━━━━━━━━
-📄 *BILL / INVOICE: ${billId}*
-📅 *Date:* ${date}
+    // 3. Fallback: Concise WhatsApp message with direct public PDF link
+    const origin = typeof window !== 'undefined' ? window.location.origin : ''
+    const pdfUrl = `${origin}/invoice/${billId}`
+
+    const message = `📄 *OFFICIAL INVOICE PDF: ${billId}*
 👤 *Customer:* ${customerName}
-${customerMobile ? `📱 *Mobile:* ${customerMobile}\n` : ''}━━━━━━━━━━━━━━━━━━━━━━━━━━
-*ITEMIZED BILL:*
-${itemsText || '1. Redium Artwork & Vehicle Fitting Services - ₹' + grandTotal.toFixed(2)}
-━━━━━━━━━━━━━━━━━━━━━━━━━━
-💰 *GRAND TOTAL:* ₹${grandTotal.toLocaleString('en-IN', {
+💰 *Grand Total:* ₹${grandTotal.toLocaleString('en-IN', {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     })}
-━━━━━━━━━━━━━━━━━━━━━━━━━━
-🙏 *Thank you for choosing Jay Mataji Redium Art!*
-📄 _Your official PDF invoice has been saved to your selected folder._`
+
+📥 *Download / View Official PDF Invoice:*
+${pdfUrl}
+
+🙏 *Jay Mataji Redium Art & Truck Show Fitting*
+📍 Porbandar | 📞 Contact: 6353016927`
 
     let phone = (customerMobile || '').replace(/\D/g, '')
     if (phone.length === 10) {
       phone = '91' + phone
     }
 
-    // 3. Attempt to copy bill image to clipboard for instant Ctrl+V into WhatsApp
+    // 4. Copy invoice image to clipboard so Ctrl+V in WhatsApp sends the full visual bill immediately
     try {
       const element = document.getElementById('invoice-pdf-render-zone')
       if (element && typeof ClipboardItem !== 'undefined' && navigator.clipboard?.write) {
@@ -433,7 +441,7 @@ ${itemsText || '1. Redium Artwork & Vehicle Fitting Services - ₹' + grandTotal
       console.warn('Clipboard image preparation warning:', e)
     }
 
-    // 4. Open WhatsApp Application directly using whatsapp:// URI scheme
+    // 5. Open WhatsApp Application
     const waAppUrl = phone
       ? `whatsapp://send?phone=${phone}&text=${encodeURIComponent(message)}`
       : `whatsapp://send?text=${encodeURIComponent(message)}`
@@ -445,7 +453,7 @@ ${itemsText || '1. Redium Artwork & Vehicle Fitting Services - ₹' + grandTotal
     document.body.removeChild(waLink)
 
     setShareNotice(
-      `✅ PDF ${savedPdfName ? `"${savedPdfName}"` : ''} saved to your selected folder! WhatsApp Application opened. In WhatsApp, press Ctrl+V to send the bill image, or attach the saved PDF!`
+      `✅ Actual PDF saved to your folder as "${savedPdfName}"! WhatsApp opened with your direct PDF download link. In WhatsApp, press Ctrl+V to also send the bill image, or attach the saved PDF!`
     )
   }
 

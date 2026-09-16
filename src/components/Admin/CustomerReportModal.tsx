@@ -194,6 +194,26 @@ export default function CustomerReportModal({
     if (!result) return
 
     const { fileName, blob } = result
+
+    // If Web Share API supports sending actual files, share the real PDF document!
+    if (typeof navigator !== 'undefined' && navigator.canShare) {
+      try {
+        const pdfFile = new File([blob], fileName, { type: 'application/pdf' })
+        if (navigator.canShare({ files: [pdfFile] })) {
+          await navigator.share({
+            files: [pdfFile],
+            title: `Account Statement - ${customer.name}`,
+            text: `Customer Statement for ${customer.name} - Jay Mataji Redium Art`,
+          })
+          setShareNotice(`✅ Actual PDF Statement attached and sent to WhatsApp!`)
+          return
+        }
+      } catch (err: any) {
+        if (err.name === 'AbortError') return
+        console.warn('Share error:', err)
+      }
+    }
+
     const message = `📊 *JAY MATAJI REDIUM ART & SHOW FITTING*
 *CUSTOMER LIFETIME ACCOUNT STATEMENT*
 --------------------------------
