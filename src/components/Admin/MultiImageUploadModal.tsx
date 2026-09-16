@@ -7,44 +7,6 @@ interface MultiImageUploadModalProps {
   onSuccess: () => void
 }
 
-async function compressImageFile(file: File, maxDim = 1200, quality = 0.75): Promise<Blob> {
-  return new Promise((resolve) => {
-    const reader = new FileReader()
-    reader.onload = (e) => {
-      const img = new Image()
-      img.onload = () => {
-        let width = img.width
-        let height = img.height
-        if (width > maxDim || height > maxDim) {
-          if (width > height) {
-            height = Math.round((height * maxDim) / width)
-            width = maxDim
-          } else {
-            width = Math.round((width * maxDim) / height)
-            height = maxDim
-          }
-        }
-        const canvas = document.createElement('canvas')
-        canvas.width = width
-        canvas.height = height
-        const ctx = canvas.getContext('2d')
-        ctx?.drawImage(img, 0, 0, width, height)
-        canvas.toBlob(
-          (blob) => {
-            resolve(blob || file)
-          },
-          'image/jpeg',
-          quality
-        )
-      }
-      img.onerror = () => resolve(file)
-      img.src = e.target?.result as string
-    }
-    reader.onerror = () => resolve(file)
-    reader.readAsDataURL(file)
-  })
-}
-
 export default function MultiImageUploadModal({
   onClose,
   onSuccess,
@@ -99,12 +61,20 @@ export default function MultiImageUploadModal({
     setError(null)
 
     try {
-      const formData = new FormData()
-      for (const file of selectedFiles) {
-        const compressedBlob = await compressImageFile(file, 1200, 0.75)
-        formData.append('images', compressedBlob, file.name)
-      }
       const token = localStorage.getItem('adminToken')
+      if (!token) {
+        setError('Admin session not found. Please log in again.')
+        setTimeout(() => {
+          window.location.href = '/admin'
+        }, 1500)
+        return
+      }
+
+      const formData = new FormData()
+      selectedFiles.forEach((file) => {
+        formData.append('images', file)
+      })
+
       const response = await fetch('/api/gallery', {
         method: 'POST',
         headers: {
@@ -119,12 +89,24 @@ export default function MultiImageUploadModal({
         onSuccess()
         onClose()
       } else {
-        const data = await response.json()
-        setError(data.message || 'Failed to upload images')
+        if (response.status === 401) {
+          localStorage.removeItem('adminToken')
+          setError('Admin session expired. Redirecting to login...')
+          setTimeout(() => {
+            window.location.href = '/admin'
+          }, 1500)
+          return
+        }
+        if (response.status === 413) {
+          setError('Selected files are too large for a single upload. Please upload 2-3 photos at a time.')
+          return
+        }
+        const data = await response.json().catch(() => ({}))
+        setError(data.message || `Upload failed (Status ${response.status})`)
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Upload error:', err)
-      setError('An error occurred during upload')
+      setError(`An error occurred during upload: ${err?.message || 'Network error'}`)
     } finally {
       setLoading(false)
     }
