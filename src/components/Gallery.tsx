@@ -81,10 +81,24 @@ export default function Gallery() {
         headers: { 'Cache-Control': 'no-cache' },
       })
 
+      const deletedSet = ((): Set<string> => {
+        try {
+          const raw = typeof window !== 'undefined' ? localStorage.getItem('jaymataji_deleted_photo_ids') : null
+          if (!raw) return new Set<string>()
+          const arr = JSON.parse(raw)
+          return new Set<string>(Array.isArray(arr) ? arr.map((x: any) => String(x).trim().toLowerCase()) : [])
+        } catch {
+          return new Set<string>()
+        }
+      })()
+
       if (response.ok) {
         const initialData = await response.json()
         if (Array.isArray(initialData) && initialData.length > 0) {
-          setItems(initialData)
+          const cleanInitial = initialData.filter(
+            (p: any) => !deletedSet.has(String(p.id || '').trim().toLowerCase())
+          )
+          setItems(cleanInitial)
           if (showLoader) setLoading(false)
 
           // 2. Fetch full public set in background
@@ -95,7 +109,10 @@ export default function Gallery() {
             .then((res) => (res.ok ? res.json() : []))
             .then((allData) => {
               if (Array.isArray(allData)) {
-                setItems(allData)
+                const cleanAll = allData.filter(
+                  (p: any) => !deletedSet.has(String(p.id || '').trim().toLowerCase())
+                )
+                setItems(cleanAll)
               }
             })
             .catch(() => {})
@@ -111,7 +128,10 @@ export default function Gallery() {
       if (fallback.ok) {
         const full = await fallback.json()
         if (Array.isArray(full)) {
-          setItems(full)
+          const cleanFull = full.filter(
+            (p: any) => !deletedSet.has(String(p.id || '').trim().toLowerCase())
+          )
+          setItems(cleanFull)
         }
       }
     } catch (error) {

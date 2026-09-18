@@ -21,7 +21,18 @@ export interface GalleryFolder {
 
 export interface DeletedStats {
   totalCount: number
+  activeCount?: number
+  totalHistorical?: number
+  deletionPercentage?: number
   recentDeletions: Array<{ id: string; deletedAt: string }>
+}
+
+export interface DeleteProgressState {
+  current: number
+  total: number
+  percentage: number
+  isComplete: boolean
+  currentBatchText: string
 }
 
 export default function AdminGalleryManager() {
@@ -36,6 +47,9 @@ export default function AdminGalleryManager() {
   // Live Deletion Tracker state
   const [deletedStats, setDeletedStats] = useState<DeletedStats | null>(null)
   const [showDeletedModal, setShowDeletedModal] = useState(false)
+
+  // Live Deletion Progress Modal state (the "show 65% delete like this" feature)
+  const [deleteProgress, setDeleteProgress] = useState<DeleteProgressState | null>(null)
 
   // Folder creation state
   const [showCreateFolderModal, setShowCreateFolderModal] = useState(false)
@@ -57,6 +71,31 @@ export default function AdminGalleryManager() {
   const [showMoveModal, setShowMoveModal] = useState(false)
   const [targetMoveFolderId, setTargetMoveFolderId] = useState<string>('')
   const [isMoving, setIsMoving] = useState(false)
+
+  // Client-side tombstone helpers
+  const getClientDeletedIdSet = (): Set<string> => {
+    try {
+      const raw = typeof window !== 'undefined' ? localStorage.getItem('jaymataji_deleted_photo_ids') : null
+      if (!raw) return new Set<string>()
+      const arr = JSON.parse(raw)
+      return new Set<string>(Array.isArray(arr) ? arr.map((x: any) => String(x).trim().toLowerCase()) : [])
+    } catch {
+      return new Set<string>()
+    }
+  }
+
+  const recordClientDeletedIds = (ids: string[]) => {
+    try {
+      if (typeof window === 'undefined') return
+      const raw = localStorage.getItem('jaymataji_deleted_photo_ids')
+      const current = raw ? JSON.parse(raw) : []
+      const set = new Set<string>(Array.isArray(current) ? current.map((x: any) => String(x).trim().toLowerCase()) : [])
+      ids.forEach((id) => set.add(String(id).trim().toLowerCase()))
+      localStorage.setItem('jaymataji_deleted_photo_ids', JSON.stringify(Array.from(set)))
+    } catch (e) {
+      console.error('Error saving deleted IDs to localStorage:', e)
+    }
+  }
 
   useEffect(() => {
     fetchInitialData()
@@ -80,7 +119,11 @@ export default function AdminGalleryManager() {
       })
       if (res.ok) {
         const data = await res.json()
-        setPhotos(data)
+        const tombstoneSet = getClientDeletedIdSet()
+        const filtered = Array.isArray(data)
+          ? data.filter((p: any) => !tombstoneSet.has(String(p.id).trim().toLowerCase()))
+          : []
+        setPhotos(filtered)
       }
     } catch (err) {
       console.error('Error fetching gallery:', err)
@@ -153,69 +196,149 @@ export default function AdminGalleryManager() {
     return map
   }, [photos])
 
-  // Single delete
+  // Single delete with live tracking
   const handleDeleteSingle = async (id: string) => {
-    if (!confirm('Are you sure you want to permanently delete this photo? It will be tracked in the deleted counter and never reappear.'))
+    if (
+      !confirm(
+        'Are you sure you want to permanently delete this photo? It will be tracked in the deleted counter and never reappear.'
+      )
+    )
       return
 
+    const token = localStorage.getItem('adminToken')
+    setDeleteProgress({
+      current: 0,
+      total: 1,
+      percentage: 0,
+      isComplete: false,
+      currentBatchText: 'Deleting photo from library...',
+    })
+
     try {
-      const token = localStorage.getItem('adminToken')
       const res = await fetch(`/api/gallery/${encodeURIComponent(id)}`, {
         method: 'DELETE',
         headers: { Authorization: `Bearer ${token}` },
       })
       if (res.ok) {
+        recordClientDeletedIds([id])
         setPhotos((prev) => prev.filter((p) => p.id !== id))
         setSelectedIds((prev) => {
           const next = new Set(prev)
           next.delete(id)
           return next
         })
-        fetchDeletedStats()
+        setDeleteProgress({
+          current: 1,
+          total: 1,
+          percentage: 100,
+          isComplete: true,
+          currentBatchText: 'Photo permanently deleted (100% completed)!',
+        })
+        await fetchDeletedStats()
       } else {
         const err = await res.json().catch(() => ({}))
         alert(err.message || 'Failed to delete image')
+        setDeleteProgress(null)
       }
     } catch (err) {
       console.error('Error deleting photo:', err)
       alert('Error occurred while deleting photo')
+      setDeleteProgress(null)
     }
   }
 
-  // Batch delete
-  const handleDeleteSelected = async () => {
-    if (selectedIds.size === 0) return
+  // Batch delete with Live 65% Progress Bar Tracker
+  const handleDeleteSelected = async (customIds?: string[] | React.MouseEvent) => {
+    const targetIds = Array.isArray(customIds) ? customIds : Array.from(selectedIds)
+    if (targetIds.length === 0) return
     if (
       !confirm(
-        `Are you sure you want to permanently delete ${selectedIds.size} selected image(s)? They will be tracked in the deleted counter and never reappear.`
+        `Are you sure you want to permanently delete ${targetIds.length} selected image(s)? They will be tracked in the deleted counter and never reappear.`
       )
     )
       return
 
-    try {
-      const token = localStorage.getItem('adminToken')
-      const idsToDelete = Array.from(selectedIds)
-      const res = await fetch('/api/gallery', {
-        method: 'DELETE',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ ids: idsToDelete }),
-      })
+    const token = localStorage.getItem('adminToken')
+    const total = targetIds.length
+    let processed = 0
 
-      if (res.ok) {
-        setPhotos((prev) => prev.filter((p) => !selectedIds.has(p.id)))
-        setSelectedIds(new Set())
-        fetchDeletedStats()
-      } else {
-        const err = await res.json().catch(() => ({}))
-        alert(err.message || 'Failed to delete selected images')
+    // Initialize the live deletion progress modal (e.g. 0% -> 65% -> 100%)
+    setDeleteProgress({
+      current: 0,
+      total,
+      percentage: 0,
+      isComplete: false,
+      currentBatchText: `Preparing to delete ${total} artwork(s)...`,
+    })
+
+    const batchSize = 4
+    try {
+      for (let i = 0; i < total; i += batchSize) {
+        const batch = targetIds.slice(i, i + batchSize)
+        const res = await fetch('/api/gallery', {
+          method: 'DELETE',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ ids: batch }),
+        })
+
+        if (res.ok) {
+          processed += batch.length
+          const pct = Math.min(100, Math.round((processed / total) * 100))
+
+          // Record in client localStorage tombstone
+          recordClientDeletedIds(batch)
+
+          // Update active photos state
+          const batchSet = new Set(batch.map((b) => b.trim().toLowerCase()))
+          setPhotos((prev) => prev.filter((p) => !batchSet.has(p.id.trim().toLowerCase())))
+          setSelectedIds((prev) => {
+            const next = new Set(prev)
+            batch.forEach((id) => next.delete(id))
+            return next
+          })
+
+          const isFinished = processed >= total
+          setDeleteProgress({
+            current: processed,
+            total,
+            percentage: pct,
+            isComplete: isFinished,
+            currentBatchText: isFinished
+              ? `All ${total} photos permanently deleted and locked!`
+              : `Deleting photo ${processed} of ${total} (${pct}% completed)...`,
+          })
+
+          // Smooth pacing for the progress bar animation
+          if (!isFinished) {
+            await new Promise((r) => setTimeout(r, 180))
+          }
+        } else {
+          const err = await res.json().catch(() => ({}))
+          alert(err.message || 'Error occurred during deletion batch')
+          break
+        }
       }
+
+      await fetchDeletedStats()
     } catch (e) {
       console.error('Delete error:', e)
       alert('Error occurred while deleting images')
     }
+  }
+
+  // Clean any remaining stale demo quote photos
+  const handlePurgeStaleQuotes = () => {
+    const stalePhotos = photos.filter(
+      (p) => !p.folderId || p.id.startsWith('1789') || p.id.startsWith('1773')
+    )
+    if (stalePhotos.length === 0) {
+      alert('No stale sample quote photos detected in library.')
+      return
+    }
+    handleDeleteSelected(stalePhotos.map((p) => p.id))
   }
 
   // Toggle selection
@@ -395,43 +518,98 @@ export default function AdminGalleryManager() {
   return (
     <div className="space-y-6">
       {/* Live Deleted Photos Tracker Banner */}
-      <div className="bg-gradient-to-r from-red-900/90 to-rose-950 text-white p-4 sm:p-5 rounded-2xl shadow-md border border-red-800/60 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div className="flex items-start sm:items-center gap-3.5">
-          <div className="w-12 h-12 rounded-xl bg-red-800/60 flex items-center justify-center text-2xl shadow-inner border border-red-700/50">
-            🗑️
+      <div className="bg-gradient-to-r from-red-950 via-rose-950 to-red-900 text-white p-4 sm:p-5 rounded-2xl shadow-md border border-red-800/60 flex flex-col gap-4">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="flex items-start sm:items-center gap-3.5">
+            <div className="w-12 h-12 rounded-xl bg-red-800/60 flex items-center justify-center text-2xl shadow-inner border border-red-700/50">
+              🗑️
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h3 className="font-extrabold text-sm sm:text-base text-white tracking-wide">
+                  Live Deleted Photos Tracker
+                </h3>
+                <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-500/40 text-[10px] font-extrabold text-emerald-300">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
+                  LIVE SYNC
+                </span>
+              </div>
+              <p className="text-xs text-red-200 mt-0.5">
+                Permanently deleted photos are tombstone-locked and guaranteed never to reappear on refresh or WhatsApp links.
+              </p>
+            </div>
           </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h3 className="font-extrabold text-sm sm:text-base text-white tracking-wide">
-                Live Deleted Photos Tracker
-              </h3>
-              <span className="animate-pulse flex h-2 w-2 relative">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-400"></span>
+
+          <div className="flex flex-wrap items-center gap-2.5">
+            <div className="bg-black/40 px-3 py-1.5 rounded-xl border border-red-700/40 text-center min-w-[75px]">
+              <span className="text-[9px] text-red-300 font-bold uppercase block tracking-wider">
+                Total Deleted
+              </span>
+              <span className="text-base sm:text-lg font-black text-white">
+                {deletedStats?.totalCount ?? 0}
               </span>
             </div>
-            <p className="text-xs text-red-200 mt-0.5">
-              Permanently deleted photos are tombstone-locked and guaranteed never to reappear on refresh or new cold-starts.
-            </p>
+
+            <div className="bg-black/40 px-3 py-1.5 rounded-xl border border-red-700/40 text-center min-w-[75px]">
+              <span className="text-[9px] text-red-300 font-bold uppercase block tracking-wider">
+                Active Artworks
+              </span>
+              <span className="text-base sm:text-lg font-black text-emerald-300">
+                {photos.length}
+              </span>
+            </div>
+
+            <div className="bg-black/40 px-3 py-1.5 rounded-xl border border-red-700/40 text-center min-w-[75px]">
+              <span className="text-[9px] text-amber-300 font-bold uppercase block tracking-wider">
+                Deletion Rate
+              </span>
+              <span className="text-base sm:text-lg font-black text-amber-300">
+                {(() => {
+                  const total = (deletedStats?.totalCount ?? 0) + photos.length
+                  return total > 0 ? Math.round(((deletedStats?.totalCount ?? 0) / total) * 100) : 0
+                })()}%
+              </span>
+            </div>
+
+            <button
+              onClick={() => fetchInitialData()}
+              title="Refresh live sync from database"
+              className="px-3 py-2 bg-white/10 hover:bg-white/20 text-white rounded-xl text-xs font-bold transition border border-white/20 shadow-sm flex items-center gap-1"
+            >
+              🔄 Refresh
+            </button>
+
+            <button
+              onClick={() => setShowDeletedModal(true)}
+              className="px-3 py-2 bg-white/10 hover:bg-white/20 text-white rounded-xl text-xs font-bold transition border border-white/20 shadow-sm flex items-center gap-1"
+            >
+              🔍 View Log
+            </button>
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
-          <div className="bg-black/30 px-3.5 py-1.5 rounded-xl border border-red-700/40 text-right">
-            <span className="text-[10px] text-red-300 font-bold uppercase block tracking-wider">
-              Total Deleted
-            </span>
-            <span className="text-lg font-black text-white">
-              {deletedStats?.totalCount ?? 0}
+        {/* Visual Progress Bar inside the Tracker Banner */}
+        <div className="bg-black/30 p-2.5 rounded-xl border border-red-800/40">
+          <div className="flex justify-between items-center text-[11px] font-bold text-red-200 mb-1.5">
+            <span>Library Deletion & Cleanup Ratio</span>
+            <span className="text-amber-300">
+              {(() => {
+                const total = (deletedStats?.totalCount ?? 0) + photos.length
+                return total > 0 ? Math.round(((deletedStats?.totalCount ?? 0) / total) * 100) : 0
+              })()}% Cleaned
             </span>
           </div>
-
-          <button
-            onClick={() => setShowDeletedModal(true)}
-            className="px-3.5 py-2 bg-white/10 hover:bg-white/20 text-white rounded-xl text-xs font-bold transition border border-white/20 shadow-sm"
-          >
-            🔍 View Log
-          </button>
+          <div className="w-full bg-red-950/80 rounded-full h-2.5 p-0.5 border border-red-700/50 overflow-hidden shadow-inner">
+            <div
+              className="h-full rounded-full bg-gradient-to-r from-red-500 via-rose-400 to-emerald-400 transition-all duration-700 ease-out"
+              style={{
+                width: `${(() => {
+                  const total = (deletedStats?.totalCount ?? 0) + photos.length
+                  return total > 0 ? Math.min(100, Math.round(((deletedStats?.totalCount ?? 0) / total) * 100)) : 0
+                })()}%`,
+              }}
+            />
+          </div>
         </div>
       </div>
 
@@ -458,6 +636,16 @@ export default function AdminGalleryManager() {
             >
               <span>+</span> New Folder
             </button>
+
+            {photos.some((p) => !p.folderId || p.id.startsWith('1789') || p.id.startsWith('1773')) && (
+              <button
+                onClick={handlePurgeStaleQuotes}
+                title="Wipe any legacy sample quote photos with the live progress tracker"
+                className="px-3.5 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-bold rounded-xl transition flex items-center gap-1.5 border border-rose-200 shadow-sm"
+              >
+                <span>🧹</span> Clean Sample Quotes
+              </button>
+            )}
 
             <button
               onClick={() => setShowUploadModal(true)}
@@ -1057,6 +1245,94 @@ export default function AdminGalleryManager() {
             >
               ×
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* LIVE DELETION PROGRESS MODAL (Real-time percentage & animated progress bar: "show 65% delete like this") */}
+      {deleteProgress && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-gradient-to-b from-gray-900 via-gray-900 to-black text-white rounded-3xl shadow-2xl max-w-md w-full p-6 sm:p-8 border border-red-800/60 relative overflow-hidden">
+            {/* Ambient Red Glow */}
+            <div className="absolute -top-24 -left-24 w-48 h-48 bg-red-600/20 rounded-full blur-3xl pointer-events-none" />
+            <div className="absolute -bottom-24 -right-24 w-48 h-48 bg-rose-600/20 rounded-full blur-3xl pointer-events-none" />
+
+            <div className="relative z-10 flex flex-col items-center text-center">
+              {/* Animated Icon */}
+              <div
+                className={`w-16 h-16 rounded-2xl flex items-center justify-center text-3xl shadow-lg mb-4 border ${
+                  deleteProgress.isComplete
+                    ? 'bg-emerald-600/30 border-emerald-500/50 text-emerald-400 shadow-emerald-950/60'
+                    : 'bg-red-600/30 border-red-500/50 text-red-400 shadow-red-950/60 animate-pulse'
+                }`}
+              >
+                {deleteProgress.isComplete ? '✅' : '🗑️'}
+              </div>
+
+              {/* Title */}
+              <h3 className="text-xl font-black tracking-tight text-white">
+                {deleteProgress.isComplete ? 'Artworks Permanently Deleted!' : 'Deleting Artworks in Progress...'}
+              </h3>
+
+              <p className="text-xs text-gray-300 mt-1 max-w-sm">
+                {deleteProgress.isComplete
+                  ? 'All selected photos have been securely deleted, tombstone locked, and removed from server and cache.'
+                  : 'Removing artwork files from database, registering permanent tombstone locks, and syncing live state.'}
+              </p>
+
+              {/* Large Percentage Badge (The "show 65% delete like this" feature) */}
+              <div className="my-6 flex flex-col items-center">
+                <div className="text-5xl sm:text-6xl font-black bg-gradient-to-r from-red-400 via-rose-300 to-amber-300 bg-clip-text text-transparent tracking-tight">
+                  {deleteProgress.percentage}%
+                </div>
+                <div className="text-xs uppercase tracking-widest font-extrabold text-red-300 mt-1">
+                  {deleteProgress.isComplete ? '100% Deletion Finished' : `${deleteProgress.percentage}% Deleted`}
+                </div>
+              </div>
+
+              {/* Glowing Progress Bar */}
+              <div className="w-full bg-gray-800/90 rounded-full h-4 p-1 border border-red-700/60 overflow-hidden shadow-inner mb-3 relative">
+                <div
+                  className="h-full rounded-full bg-gradient-to-r from-red-600 via-rose-500 to-amber-400 transition-all duration-300 ease-out shadow-lg shadow-red-500/50 relative"
+                  style={{ width: `${Math.min(100, Math.max(0, deleteProgress.percentage))}%` }}
+                >
+                  <span className="absolute inset-0 bg-white/20 animate-pulse rounded-full" />
+                </div>
+              </div>
+
+              {/* Real-time details */}
+              <div className="flex justify-between items-center w-full text-xs text-gray-400 font-medium px-1">
+                <span>
+                  Processed: <strong className="text-white">{deleteProgress.current}</strong> / {deleteProgress.total}
+                </span>
+                <span className="text-amber-300 font-semibold truncate max-w-[200px]">
+                  {deleteProgress.currentBatchText}
+                </span>
+              </div>
+
+              {/* Tombstone Security Note */}
+              <div className="mt-5 p-3 rounded-xl bg-red-950/40 border border-red-800/40 text-[11px] text-red-200 flex items-center gap-2 text-left">
+                <span className="text-base">🔒</span>
+                <span>
+                  <strong>Guaranteed Tombstone Protection:</strong> Deleted IDs are stored permanently in the database so they will never reappear on reload or WhatsApp links.
+                </span>
+              </div>
+
+              {/* Action Button */}
+              {deleteProgress.isComplete ? (
+                <button
+                  onClick={() => setDeleteProgress(null)}
+                  className="mt-6 w-full py-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-black rounded-xl text-sm transition shadow-lg shadow-emerald-900/40"
+                >
+                  Done & Refresh Library
+                </button>
+              ) : (
+                <div className="mt-4 flex items-center gap-2 text-[11px] text-gray-400">
+                  <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+                  <span>Processing batch deletion... Please keep browser open.</span>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}

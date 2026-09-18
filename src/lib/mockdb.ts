@@ -38,7 +38,8 @@ function ensureDirAndSeed() {
       for (const f of files) {
         const src = path.join(ROOT_DATA_DIR, f)
         const dst = path.join(DATA_DIR, f)
-        if (fs.existsSync(src) && !fs.existsSync(dst)) {
+        const needsCopy = !fs.existsSync(dst) || (fs.existsSync(dst) && fs.statSync(dst).size === 0)
+        if (fs.existsSync(src) && needsCopy) {
           try {
             fs.copyFileSync(src, dst)
           } catch (e) {
@@ -58,7 +59,7 @@ function safeReadFile(filePath: string): string {
   try {
     ensureDirAndSeed()
     let content = ''
-    if (!fs.existsSync(filePath)) {
+    if (!fs.existsSync(filePath) || (fs.existsSync(filePath) && fs.statSync(filePath).size === 0)) {
       const baseName = path.basename(filePath)
       const rootFallback = path.join(ROOT_DATA_DIR, baseName)
       if (fs.existsSync(rootFallback)) {
@@ -68,6 +69,13 @@ function safeReadFile(filePath: string): string {
       }
     } else {
       content = fs.readFileSync(filePath, 'utf-8')
+    }
+    if (!content || !content.trim()) {
+      const baseName = path.basename(filePath)
+      const rootFallback = path.join(ROOT_DATA_DIR, baseName)
+      if (fs.existsSync(rootFallback)) {
+        content = fs.readFileSync(rootFallback, 'utf-8')
+      }
     }
     if (content.charCodeAt(0) === 0xfeff) {
       content = content.slice(1)
@@ -327,10 +335,24 @@ export function recordPhotoDeletions(ids: string[]): number {
   return newlyRecorded
 }
 
-export function getDeletedPhotosStats(): { totalCount: number; recentDeletions: DeletedGalleryItem[] } {
+export function getDeletedPhotosStats(): {
+  totalCount: number
+  activeCount: number
+  totalHistorical: number
+  deletionPercentage: number
+  recentDeletions: DeletedGalleryItem[]
+} {
   const items = getDeletedGalleryItems()
+  const activePhotos = getAllGalleryImages(false)
+  const totalHistorical = items.length + activePhotos.length
+  const deletionPercentage =
+    totalHistorical > 0 ? Math.round((items.length / totalHistorical) * 100) : 0
+
   return {
     totalCount: items.length,
+    activeCount: activePhotos.length,
+    totalHistorical,
+    deletionPercentage,
     recentDeletions: items.slice(0, 100),
   }
 }
