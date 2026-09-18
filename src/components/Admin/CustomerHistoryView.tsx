@@ -24,6 +24,7 @@ export interface CustomerData {
       total: number
     }>
     grandTotal: number
+    viaCustomer?: string
     paymentStatus?: 'PAID' | 'PENDING'
     paymentMethod?: 'CASH' | 'UPI' | 'CARD'
   }>
@@ -343,6 +344,7 @@ export default function CustomerHistoryView() {
       customerId: string
       customerName: string
       customerMobile: string
+      viaCustomer?: string
       grandTotal: number
       paymentStatus?: 'PAID' | 'PENDING'
       paymentMethod?: 'CASH' | 'UPI' | 'CARD'
@@ -364,6 +366,7 @@ export default function CustomerHistoryView() {
           customerId: c.id,
           customerName: c.name,
           customerMobile: c.mobile,
+          viaCustomer: inv.viaCustomer,
           grandTotal: inv.grandTotal || 0,
           paymentStatus: inv.paymentStatus || 'PAID',
           paymentMethod: inv.paymentMethod || 'UPI',
@@ -960,6 +963,13 @@ export default function CustomerHistoryView() {
                         {/* Customer */}
                         <td className="py-3 px-4 whitespace-nowrap">
                           <div className="font-bold text-gray-900">{inv.customerName}</div>
+                          {inv.viaCustomer && (
+                            <div className="mt-0.5">
+                              <span className="inline-block px-1.5 py-0.5 bg-orange-100 text-orange-800 text-[10px] font-black rounded border border-orange-200">
+                                🤝 Via: {inv.viaCustomer}
+                              </span>
+                            </div>
+                          )}
                           {inv.customerMobile ? (
                             <div className="text-xs text-gray-500 flex items-center gap-1.5 mt-0.5">
                               <span>📞 {inv.customerMobile}</span>
@@ -1262,6 +1272,11 @@ export default function CustomerHistoryView() {
                             ) : (
                               <span className="text-[11px] bg-amber-100 text-amber-800 border border-amber-300 px-2 py-0.5 rounded font-extrabold flex items-center gap-0.5">
                                 <span>⏳</span> PENDING
+                              </span>
+                            )}
+                            {inv.viaCustomer && (
+                              <span className="text-[11px] bg-orange-100 text-orange-800 border border-orange-200 px-2 py-0.5 rounded font-extrabold flex items-center gap-0.5">
+                                <span>🤝</span> Via: {inv.viaCustomer}
                               </span>
                             )}
                             {idx === 0 && (

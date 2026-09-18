@@ -68,6 +68,9 @@ export default function InvoiceModal({
   const [customerMobile, setCustomerMobile] = useState(
     existingInvoice ? existingInvoice.customerMobile : initialCustomerMobile
   )
+  const [viaCustomer, setViaCustomer] = useState(
+    existingInvoice?.viaCustomer || ''
+  )
   const [knownCustomers, setKnownCustomers] = useState<
     Array<{ name: string; mobile: string; totalSpent: number }>
   >([])
@@ -171,6 +174,7 @@ export default function InvoiceModal({
       setSavedInvoiceId(existingInvoice.id || null)
       setCustomerName(existingInvoice.customerName || '')
       setCustomerMobile(existingInvoice.customerMobile || '')
+      setViaCustomer(existingInvoice.viaCustomer || '')
       setDate(
         existingInvoice.date || new Date().toISOString().split('T')[0]
       )
@@ -257,6 +261,7 @@ export default function InvoiceModal({
         body: JSON.stringify({
           customerName: customerName.trim(),
           customerMobile: customerMobile.trim(),
+          viaCustomer: viaCustomer.trim(),
           date,
           paymentStatus,
           paymentMethod: paymentStatus === 'PENDING' ? undefined : paymentMethod,
@@ -498,9 +503,11 @@ export default function InvoiceModal({
       ? `💳 *Payment:* PAID (${paymentMethod})`
       : `⏳ *Payment:* PENDING`
 
+    const viaLine = viaCustomer.trim() ? `🤝 *Via / Ref:* ${viaCustomer.trim()}\n` : ''
+
     const message = `📄 *OFFICIAL INVOICE PDF: ${billId}*
 👤 *Customer:* ${customerName}
-💰 *Grand Total:* ₹${grandTotal.toLocaleString('en-IN', {
+${viaLine}💰 *Grand Total:* ₹${grandTotal.toLocaleString('en-IN', {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
     })}
@@ -828,6 +835,42 @@ ${pdfUrl}
               {customerName || 'Customer'}
             </span>
           </div>
+
+          {viaCustomer && (
+            <div
+              style={{
+                backgroundColor: '#fff7ed',
+                border: '1px solid #fed7aa',
+                borderRadius: '6px',
+                padding: '4px 12px',
+                textAlign: 'center',
+                alignSelf: 'center',
+              }}
+            >
+              <span
+                style={{
+                  color: '#ea580c',
+                  fontWeight: '800',
+                  textTransform: 'uppercase',
+                  fontSize: '10px',
+                  display: 'block',
+                }}
+              >
+                Via / Referred By:
+              </span>
+              <span
+                style={{
+                  fontSize: '14px',
+                  fontWeight: '800',
+                  color: '#9a3412',
+                  marginTop: '1px',
+                  display: 'block',
+                }}
+              >
+                🤝 {viaCustomer}
+              </span>
+            </div>
+          )}
 
           <div style={{ textAlign: 'right' }}>
             <span
@@ -1241,7 +1284,7 @@ ${pdfUrl}
             </div>
 
             {/* Customer Input Fields */}
-            <div className="grid sm:grid-cols-2 gap-3 mb-4 bg-gray-50 p-3.5 rounded-xl border border-gray-200">
+            <div className="grid sm:grid-cols-3 gap-3 mb-4 bg-gray-50 p-3.5 rounded-xl border border-gray-200">
               <div ref={customerInputRef} className="relative">
                 <label className="block text-xs font-bold uppercase text-gray-700 mb-1">
                   Customer Name:
@@ -1295,6 +1338,19 @@ ${pdfUrl}
                   value={customerMobile}
                   onChange={(e) => setCustomerMobile(e.target.value)}
                   className="w-full font-semibold text-gray-900 border border-gray-300 rounded-lg px-3 py-1.5 focus:border-primary focus:outline-none text-sm bg-white"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold uppercase text-orange-700 mb-1">
+                  🤝 Via / Reference (વાયા / રેફરન્સ):
+                </label>
+                <input
+                  type="text"
+                  placeholder="e.g. Ramesh Bhai (Via Customer)"
+                  value={viaCustomer}
+                  onChange={(e) => setViaCustomer(e.target.value)}
+                  className="w-full font-semibold text-gray-900 border border-orange-200 bg-orange-50/40 rounded-lg px-3 py-1.5 focus:border-primary focus:outline-none text-sm"
                 />
               </div>
             </div>

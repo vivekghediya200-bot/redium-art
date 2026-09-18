@@ -11,6 +11,7 @@ interface InvoiceData {
   customerId: string
   customerName: string
   customerMobile?: string
+  viaCustomer?: string
   date: string
   businessOwner?: string
   paymentStatus?: 'PAID' | 'PENDING'
@@ -176,9 +177,11 @@ export default function PublicInvoicePage() {
       ? `💳 *Payment:* PAID (${invoice.paymentMethod || 'UPI'})`
       : `⏳ *Payment:* PENDING`
 
+    const viaLine = invoice.viaCustomer?.trim() ? `🤝 *Via / Ref:* ${invoice.viaCustomer.trim()}\n` : ''
+
     const message = `📄 *OFFICIAL INVOICE PDF: ${invoice.id}*
 👤 *Customer:* ${invoice.customerName}
-💰 *Grand Total:* ₹${invoice.grandTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+${viaLine}💰 *Grand Total:* ₹${invoice.grandTotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
 ${paymentLine}
 
 📥 *Download / View Official PDF Invoice:*
@@ -349,6 +352,14 @@ ${downloadUrl}
               <span className="text-gray-500 font-bold uppercase block text-[10px]">Billed To:</span>
               <span className="text-sm font-extrabold text-gray-900">{invoice.customerName}</span>
             </div>
+
+            {invoice.viaCustomer && (
+              <div className="text-center px-3 py-1 bg-orange-50 border border-orange-200 rounded-lg">
+                <span className="text-orange-700 font-bold uppercase block text-[9px]">Via / Referred By:</span>
+                <span className="text-xs font-black text-orange-900">🤝 {invoice.viaCustomer}</span>
+              </div>
+            )}
+
             <div className="text-right">
               <span className="text-gray-500 font-bold uppercase block text-[10px]">Contact:</span>
               <span className="text-xs font-bold text-gray-800">{invoice.customerMobile || 'Not Provided'}</span>

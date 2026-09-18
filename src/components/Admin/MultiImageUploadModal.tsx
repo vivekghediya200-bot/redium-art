@@ -1,10 +1,11 @@
 'use client'
 
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 
 interface MultiImageUploadModalProps {
   onClose: () => void
   onSuccess: () => void
+  defaultFolderId?: string
 }
 
 async function safelyOptimizeImage(file: File): Promise<File | Blob> {
@@ -83,10 +84,13 @@ async function safelyOptimizeImage(file: File): Promise<File | Blob> {
 export default function MultiImageUploadModal({
   onClose,
   onSuccess,
+  defaultFolderId = '',
 }: MultiImageUploadModalProps) {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([])
   const [previews, setPreviews] = useState<string[]>([])
   const [loading, setLoading] = useState(false)
+  const [folders, setFolders] = useState<Array<{ id: string; name: string; isPrivate: boolean }>>([])
+  const [selectedFolderId, setSelectedFolderId] = useState<string>(defaultFolderId)
   const [uploadProgress, setUploadProgress] = useState<{
     current: number
     total: number
@@ -95,6 +99,24 @@ export default function MultiImageUploadModal({
   const [error, setError] = useState<string | null>(null)
   const [dragOver, setDragOver] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    const loadFolders = async () => {
+      try {
+        const token = localStorage.getItem('adminToken')
+        const res = await fetch('/api/gallery/folders', {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+        if (res.ok) {
+          const data = await res.json()
+          setFolders(data)
+        }
+      } catch (err) {
+        console.error('Error fetching folders in upload modal:', err)
+      }
+    }
+    loadFolders()
+  }, [])
 
   const handleFiles = (files: FileList | null) => {
     if (!files || files.length === 0) return
@@ -165,6 +187,9 @@ export default function MultiImageUploadModal({
 
       try {
         const formData = new FormData()
+        if (selectedFolderId) {
+          formData.append('folderId', selectedFolderId)
+        }
         for (const file of batch) {
           const optimized = await safelyOptimizeImage(file)
           formData.append('images', optimized, file.name)
@@ -246,6 +271,27 @@ export default function MultiImageUploadModal({
           >
             ×
           </button>
+        </div>
+
+        {/* Target Folder Selector */}
+        <div className="mb-4 bg-orange-50/70 border border-orange-200 rounded-xl p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-2.5">
+          <div className="flex items-center gap-2 text-xs font-bold text-gray-800">
+            <span className="text-base">📂</span>
+            <span>Destination Folder:</span>
+          </div>
+          <select
+            value={selectedFolderId}
+            onChange={(e) => setSelectedFolderId(e.target.value)}
+            disabled={loading}
+            className="text-xs font-semibold px-3 py-1.5 bg-white border border-gray-300 rounded-lg text-gray-800 focus:outline-none focus:ring-2 focus:ring-primary shadow-sm"
+          >
+            <option value="">📁 General / Uncategorized (Public)</option>
+            {folders.map((f) => (
+              <option key={f.id} value={f.id}>
+                {f.isPrivate ? '🔒' : '🌐'} {f.name} {f.isPrivate ? '(Private - Admin Only)' : '(Public - On Website)'}
+              </option>
+            ))}
+          </select>
         </div>
 
         {error && (

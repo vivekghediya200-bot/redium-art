@@ -1,0 +1,31 @@
+[
+  {
+    "id": "folder_truck_fitting",
+    "name": "Truck Show Fitting",
+    "isPrivate": false,
+    "createdAt": "2026-09-18T00:00:00.000Z",
+    "updatedAt": "2026-09-18T00:00:00.000Z"
+  },
+  {
+    "id": "folder_radium_art",
+    "name": "Radium Art & Stickers",
+    "isPrivate": false,
+    "createdAt": "2026-09-18T00:00:00.000Z",
+    "updatedAt": "2026-09-18T00:00:00.000Z"
+  },
+  {
+    "id": "folder_number_plates",
+    "name": "Number Plates & Monograms",
+    "isPrivate": false,
+    "createdAt": "2026-09-18T00:00:00.000Z",
+    "updatedAt": "2026-09-18T00:00:00.000Z"
+  },
+  {
+    "id": "folder_private_drafts",
+    "name": "Private Designs & Samples",
+    "isPrivate": true,
+    "createdAt": "2026-09-18T00:00:00.000Z",
+    "updatedAt": "2026-09-18T00:00:00.000Z"
+  }
+]
+

@@ -14,6 +14,8 @@ const DATA_DIR = IS_SERVERLESS ? path.join(os.tmpdir(), 'jaymataji_data') : ROOT
 
 const PRODUCTS_FILE = path.join(DATA_DIR, 'products.json')
 const GALLERY_FILE = path.join(DATA_DIR, 'gallery.json')
+const GALLERY_FOLDERS_FILE = path.join(DATA_DIR, 'gallery_folders.json')
+const DELETED_GALLERY_FILE = path.join(DATA_DIR, 'deleted_gallery.json')
 const CUSTOMERS_FILE = path.join(DATA_DIR, 'customers.json')
 const INVOICES_FILE = path.join(DATA_DIR, 'invoices.json')
 const ADMINS_FILE = path.join(DATA_DIR, 'admins.json')
@@ -24,7 +26,15 @@ function ensureDirAndSeed() {
       fs.mkdirSync(DATA_DIR, { recursive: true })
     }
     if (DATA_DIR !== ROOT_DATA_DIR && fs.existsSync(ROOT_DATA_DIR)) {
-      const files = ['products.json', 'gallery.json', 'customers.json', 'invoices.json', 'admins.json']
+      const files = [
+        'products.json',
+        'gallery.json',
+        'gallery_folders.json',
+        'deleted_gallery.json',
+        'customers.json',
+        'invoices.json',
+        'admins.json',
+      ]
       for (const f of files) {
         const src = path.join(ROOT_DATA_DIR, f)
         const dst = path.join(DATA_DIR, f)
@@ -96,10 +106,25 @@ function safeWriteFile(filePath: string, content: string): boolean {
   }
 }
 
+export interface GalleryFolder {
+  id: string
+  name: string
+  isPrivate: boolean // true = Admin Only (Hidden from public website), false = Public (Shown on website)
+  createdAt: string
+  updatedAt: string
+}
+
 export interface GalleryItem {
   id: string
   image: string
+  folderId?: string
+  isPrivate?: boolean
   createdAt: string
+}
+
+export interface DeletedGalleryItem {
+  id: string
+  deletedAt: string
 }
 
 export interface Customer {
@@ -123,6 +148,7 @@ export interface Invoice {
   customerId: string
   customerName: string
   customerMobile: string
+  viaCustomer?: string
   date: string
   businessName: string
   businessMobile: string
@@ -200,6 +226,45 @@ function initializeFiles(): void {
     safeWriteFile(GALLERY_FILE, JSON.stringify(initialGallery, null, 2))
   }
 
+  if (!fs.existsSync(GALLERY_FOLDERS_FILE)) {
+    const initialFolders: GalleryFolder[] = [
+      {
+        id: 'folder_truck_fitting',
+        name: 'Truck Show Fitting',
+        isPrivate: false,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+      {
+        id: 'folder_radium_art',
+        name: 'Radium Art & Stickers',
+        isPrivate: false,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+      {
+        id: 'folder_number_plates',
+        name: 'Number Plates & Monograms',
+        isPrivate: false,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+      {
+        id: 'folder_private_drafts',
+        name: 'Private Designs & Samples',
+        isPrivate: true,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+    ]
+    safeWriteFile(GALLERY_FOLDERS_FILE, JSON.stringify(initialFolders, null, 2))
+  }
+
+  if (!fs.existsSync(DELETED_GALLERY_FILE)) {
+    const defaultDeleted: DeletedGalleryItem[] = []
+    safeWriteFile(DELETED_GALLERY_FILE, JSON.stringify(defaultDeleted, null, 2))
+  }
+
   if (!fs.existsSync(CUSTOMERS_FILE)) {
     const defaultCustomers: Customer[] = []
     safeWriteFile(CUSTOMERS_FILE, JSON.stringify(defaultCustomers, null, 2))
@@ -212,13 +277,249 @@ function initializeFiles(): void {
 }
 
 /* =========================================================
+   DELETED GALLERY TOMBSTONE & LIVE TRACKING
+   ========================================================= */
+
+export function getDeletedGalleryItems(): DeletedGalleryItem[] {
+  try {
+    initializeFiles()
+    const content = safeReadFile(DELETED_GALLERY_FILE)
+    const parsed = JSON.parse(content)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
+  }
+}
+
+export function getDeletedGalleryIdSet(): Set<string> {
+  const items = getDeletedGalleryItems()
+  const set = new Set<string>()
+  for (const item of items) {
+    if (item && item.id) {
+      set.add(String(item.id).trim().toLowerCase())
+    }
+  }
+  return set
+}
+
+export function recordPhotoDeletions(ids: string[]): number {
+  if (!ids || ids.length === 0) return 0
+  const existing = getDeletedGalleryItems()
+  const existingSet = new Set(existing.map((x) => String(x.id).trim().toLowerCase()))
+  const now = new Date().toISOString()
+  let newlyRecorded = 0
+
+  for (const id of ids) {
+    const cleanId = decodeURIComponent(String(id || '')).trim().toLowerCase()
+    if (cleanId && !existingSet.has(cleanId)) {
+      existing.unshift({
+        id: String(id).trim(),
+        deletedAt: now,
+      })
+      existingSet.add(cleanId)
+      newlyRecorded++
+    }
+  }
+
+  if (newlyRecorded > 0) {
+    safeWriteFile(DELETED_GALLERY_FILE, JSON.stringify(existing, null, 2))
+  }
+  return newlyRecorded
+}
+
+export function getDeletedPhotosStats(): { totalCount: number; recentDeletions: DeletedGalleryItem[] } {
+  const items = getDeletedGalleryItems()
+  return {
+    totalCount: items.length,
+    recentDeletions: items.slice(0, 100),
+  }
+}
+
+/* =========================================================
+   GALLERY FOLDERS
+   ========================================================= */
+
+export function getAllGalleryFolders(publicOnly = false): GalleryFolder[] {
+  try {
+    initializeFiles()
+    const content = safeReadFile(GALLERY_FOLDERS_FILE)
+    const parsed = JSON.parse(content)
+    let folders: GalleryFolder[] = Array.isArray(parsed) ? parsed : []
+
+    if (folders.length === 0) {
+      folders = [
+        {
+          id: 'folder_truck_fitting',
+          name: 'Truck Show Fitting',
+          isPrivate: false,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+        {
+          id: 'folder_radium_art',
+          name: 'Radium Art & Stickers',
+          isPrivate: false,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+        {
+          id: 'folder_number_plates',
+          name: 'Number Plates & Monograms',
+          isPrivate: false,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+        {
+          id: 'folder_private_drafts',
+          name: 'Private Designs & Samples',
+          isPrivate: true,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        },
+      ]
+      safeWriteFile(GALLERY_FOLDERS_FILE, JSON.stringify(folders, null, 2))
+    }
+
+    if (publicOnly) {
+      return folders.filter((f) => !f.isPrivate)
+    }
+    return folders
+  } catch (err) {
+    console.error('Error reading gallery folders:', err)
+    return []
+  }
+}
+
+export function createGalleryFolder(name: string, isPrivate = false): GalleryFolder {
+  const folders = getAllGalleryFolders()
+  const trimmedName = name.trim()
+  const newFolder: GalleryFolder = {
+    id: `folder_${Date.now()}`,
+    name: trimmedName,
+    isPrivate: Boolean(isPrivate),
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  }
+  folders.push(newFolder)
+  safeWriteFile(GALLERY_FOLDERS_FILE, JSON.stringify(folders, null, 2))
+  return newFolder
+}
+
+export function updateGalleryFolder(
+  id: string,
+  updates: { name?: string; isPrivate?: boolean }
+): GalleryFolder | null {
+  const folders = getAllGalleryFolders()
+  const cleanId = id.trim().toLowerCase()
+  const index = folders.findIndex((f) => f.id.trim().toLowerCase() === cleanId)
+  if (index === -1) return null
+
+  const target = folders[index]
+  const updatedFolder: GalleryFolder = {
+    ...target,
+    name: updates.name !== undefined ? updates.name.trim() : target.name,
+    isPrivate: updates.isPrivate !== undefined ? Boolean(updates.isPrivate) : target.isPrivate,
+    updatedAt: new Date().toISOString(),
+  }
+  folders[index] = updatedFolder
+  safeWriteFile(GALLERY_FOLDERS_FILE, JSON.stringify(folders, null, 2))
+
+  // If folder privacy changed, sync isPrivate flag of all images in that folder
+  if (updates.isPrivate !== undefined) {
+    const images = getAllGalleryImages(false)
+    let imagesModified = false
+    for (const img of images) {
+      if (img.folderId && img.folderId.trim().toLowerCase() === cleanId) {
+        img.isPrivate = updatedFolder.isPrivate
+        imagesModified = true
+      }
+    }
+    if (imagesModified) {
+      inMemoryGalleryCache = images
+      inMemoryGalleryMtime = Date.now()
+      safeWriteFile(GALLERY_FILE, JSON.stringify(images))
+    }
+  }
+
+  return updatedFolder
+}
+
+export function deleteGalleryFolder(id: string, deletePhotos = false): boolean {
+  const folders = getAllGalleryFolders()
+  const cleanId = id.trim().toLowerCase()
+  const filtered = folders.filter((f) => f.id.trim().toLowerCase() !== cleanId)
+  if (filtered.length === folders.length) return false
+
+  safeWriteFile(GALLERY_FOLDERS_FILE, JSON.stringify(filtered, null, 2))
+
+  // Handle images inside the deleted folder
+  const images = getAllGalleryImages(false)
+  if (deletePhotos) {
+    const imagesToDelete = images.filter(
+      (img) => img.folderId && img.folderId.trim().toLowerCase() === cleanId
+    )
+    if (imagesToDelete.length > 0) {
+      deleteMultipleGalleryImages(imagesToDelete.map((img) => img.id))
+    }
+  } else {
+    // Move photos to Uncategorized
+    let modified = false
+    for (const img of images) {
+      if (img.folderId && img.folderId.trim().toLowerCase() === cleanId) {
+        delete img.folderId
+        img.isPrivate = false
+        modified = true
+      }
+    }
+    if (modified) {
+      inMemoryGalleryCache = images
+      inMemoryGalleryMtime = Date.now()
+      safeWriteFile(GALLERY_FILE, JSON.stringify(images))
+    }
+  }
+
+  return true
+}
+
+export function moveGalleryImagesToFolder(imageIds: string[], targetFolderId?: string): number {
+  const images = getAllGalleryImages(false)
+  const idSet = new Set(imageIds.map((id) => decodeURIComponent(id).trim().toLowerCase()))
+  const folders = getAllGalleryFolders()
+  const targetFolder = targetFolderId
+    ? folders.find((f) => f.id.trim().toLowerCase() === targetFolderId.trim().toLowerCase())
+    : null
+
+  let updatedCount = 0
+  for (const img of images) {
+    const imgId = String(img.id || '').trim().toLowerCase()
+    if (idSet.has(imgId)) {
+      if (targetFolder) {
+        img.folderId = targetFolder.id
+        img.isPrivate = targetFolder.isPrivate
+      } else {
+        delete img.folderId
+        img.isPrivate = false
+      }
+      updatedCount++
+    }
+  }
+
+  if (updatedCount > 0) {
+    inMemoryGalleryCache = images
+    inMemoryGalleryMtime = Date.now()
+    safeWriteFile(GALLERY_FILE, JSON.stringify(images))
+  }
+  return updatedCount
+}
+
+/* =========================================================
    GALLERY (Multi-Image Showcase)
    ========================================================= */
 
 let inMemoryGalleryCache: GalleryItem[] | null = null
 let inMemoryGalleryMtime = 0
 
-export function getAllGalleryImages(): GalleryItem[] {
+export function getAllGalleryImages(publicOnly = false, folderId?: string): GalleryItem[] {
   try {
     initializeFiles()
     let currentMtime = 0
@@ -228,40 +529,96 @@ export function getAllGalleryImages(): GalleryItem[] {
       }
     } catch {}
 
+    let items: GalleryItem[] = []
     if (inMemoryGalleryCache && inMemoryGalleryMtime === currentMtime && currentMtime > 0) {
-      return inMemoryGalleryCache
+      items = inMemoryGalleryCache
+    } else {
+      const data = safeReadFile(GALLERY_FILE)
+      const parsed = JSON.parse(data)
+      if (Array.isArray(parsed)) {
+        items = parsed
+        inMemoryGalleryCache = parsed
+        inMemoryGalleryMtime = currentMtime
+      }
     }
 
-    const data = safeReadFile(GALLERY_FILE)
-    const parsed = JSON.parse(data)
-    if (Array.isArray(parsed)) {
-      inMemoryGalleryCache = parsed
-      inMemoryGalleryMtime = currentMtime
-      return parsed
+    // Always filter out any tombstoned/deleted photo IDs
+    const deletedIdSet = getDeletedGalleryIdSet()
+    if (deletedIdSet.size > 0) {
+      const originalCount = items.length
+      items = items.filter((item) => {
+        const id = String(item.id || '').trim().toLowerCase()
+        return !deletedIdSet.has(id)
+      })
+      if (items.length !== originalCount) {
+        inMemoryGalleryCache = items
+        inMemoryGalleryMtime = Date.now()
+        safeWriteFile(GALLERY_FILE, JSON.stringify(items))
+      }
     }
-    return []
+
+    // Determine private folders
+    const folders = getAllGalleryFolders()
+    const privateFolderIdSet = new Set(
+      folders.filter((f) => f.isPrivate).map((f) => f.id.trim().toLowerCase())
+    )
+
+    // Filter by publicOnly if requested
+    if (publicOnly) {
+      items = items.filter((item) => {
+        if (item.isPrivate === true) return false
+        if (item.folderId && privateFolderIdSet.has(item.folderId.trim().toLowerCase())) {
+          return false
+        }
+        return true
+      })
+    }
+
+    // Filter by folderId if specified
+    if (folderId && folderId !== 'all') {
+      const cleanFolderId = folderId.trim().toLowerCase()
+      if (cleanFolderId === 'uncategorized') {
+        items = items.filter((item) => !item.folderId)
+      } else {
+        items = items.filter(
+          (item) => item.folderId && item.folderId.trim().toLowerCase() === cleanFolderId
+        )
+      }
+    }
+
+    return items
   } catch (error) {
     console.error('Error reading gallery:', error)
     return inMemoryGalleryCache || []
   }
 }
 
-export function addGalleryImages(images: string[]): GalleryItem[] {
-  const current = getAllGalleryImages()
+export function addGalleryImages(images: string[], folderId?: string): GalleryItem[] {
+  const current = getAllGalleryImages(false)
+  let targetFolder: GalleryFolder | undefined
+  if (folderId && folderId !== 'all' && folderId !== 'uncategorized') {
+    const folders = getAllGalleryFolders()
+    targetFolder = folders.find((f) => f.id.trim().toLowerCase() === folderId.trim().toLowerCase())
+  }
+
   const newItems: GalleryItem[] = images.map((img, idx) => ({
     id: `${Date.now()}_${idx}`,
     image: img,
+    folderId: targetFolder ? targetFolder.id : undefined,
+    isPrivate: targetFolder ? targetFolder.isPrivate : false,
     createdAt: new Date().toISOString(),
   }))
   const updated = [...newItems, ...current]
   inMemoryGalleryCache = updated
+  inMemoryGalleryMtime = Date.now()
   safeWriteFile(GALLERY_FILE, JSON.stringify(updated))
   return newItems
 }
 
 export function deleteGalleryImage(id: string): boolean {
-  const current = getAllGalleryImages()
   const cleanId = decodeURIComponent(String(id || '')).trim()
+  recordPhotoDeletions([cleanId])
+  const current = getAllGalleryImages(false)
   const filtered = current.filter((item) => {
     const itemId = String(item.id || '').trim()
     return itemId !== cleanId && itemId !== String(id).trim()
@@ -273,7 +630,9 @@ export function deleteGalleryImage(id: string): boolean {
 }
 
 export function deleteMultipleGalleryImages(ids: string[]): number {
-  const current = getAllGalleryImages()
+  if (!ids || ids.length === 0) return 0
+  recordPhotoDeletions(ids)
+  const current = getAllGalleryImages(false)
   const cleanIdSet = new Set(
     ids.map((id) => decodeURIComponent(String(id || '')).trim().toLowerCase())
   )
@@ -459,6 +818,7 @@ export function getInvoicesByCustomerId(customerId: string): Invoice[] {
 export function createInvoice(data: {
   customerName: string
   customerMobile?: string
+  viaCustomer?: string
   date?: string
   items: Array<{ description: string; qty: number; rate: number }>
   notes?: string
@@ -501,6 +861,7 @@ export function createInvoice(data: {
     customerId: customer.id,
     customerName: customer.name,
     customerMobile: customer.mobile,
+    viaCustomer: data.viaCustomer ? data.viaCustomer.trim() : '',
     date: data.date || new Date().toISOString().split('T')[0],
     businessName: 'JAY MATAJI REDIUM ART & TRUCK SHOW FITTING',
     businessMobile: '6353016927',
@@ -527,6 +888,7 @@ export function updateInvoice(
   data: {
     customerName?: string
     customerMobile?: string
+    viaCustomer?: string
     date?: string
     items?: Array<{ description: string; qty: number; rate: number }>
     notes?: string
@@ -569,6 +931,7 @@ export function updateInvoice(
     customerName: customer ? customer.name : existing.customerName,
     customerMobile: customer ? customer.mobile : (data.customerMobile !== undefined ? data.customerMobile : existing.customerMobile),
     customerId: customer ? customer.id : existing.customerId,
+    viaCustomer: data.viaCustomer !== undefined ? data.viaCustomer.trim() : (existing.viaCustomer || ''),
     date: data.date || existing.date,
     items,
     subtotal,

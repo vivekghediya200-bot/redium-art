@@ -70,6 +70,7 @@ export default function ShopReportModal({
       date: string
       customerName: string
       customerMobile: string
+      viaCustomer?: string
       grandTotal: number
       paymentStatus?: 'PAID' | 'PENDING'
       paymentMethod?: 'CASH' | 'UPI' | 'CARD'
@@ -88,6 +89,7 @@ export default function ShopReportModal({
           date: inv.date,
           customerName: cust.name,
           customerMobile: cust.mobile,
+          viaCustomer: inv.viaCustomer,
           grandTotal: inv.grandTotal,
           paymentStatus: inv.paymentStatus || 'PAID',
           paymentMethod: inv.paymentMethod || 'UPI',

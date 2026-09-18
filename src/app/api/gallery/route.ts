@@ -18,15 +18,21 @@ function checkAuth(request: NextRequest) {
 export const dynamic = 'force-dynamic'
 export const revalidate = 0
 
-// Public GET for gallery items (strictly live data, no stale caching)
+// Public & Admin GET for gallery items (strictly live data, no stale caching)
 export async function GET(request: NextRequest) {
   try {
     await initializeDatabase()
-    const images = getAllGalleryImages()
+    const auth = checkAuth(request)
 
     const { searchParams } = new URL(request.url)
     const limitParam = searchParams.get('limit')
     const pageParam = searchParams.get('page')
+    const folderIdParam = searchParams.get('folderId') || undefined
+    const publicOnlyParam = searchParams.get('publicOnly')
+
+    // If unauthenticated or publicOnly requested, filter out private items and private folders
+    const isPublicOnly = !auth || publicOnlyParam === 'true'
+    const images = getAllGalleryImages(isPublicOnly, folderIdParam)
 
     let result = images
     if (limitParam) {
@@ -54,7 +60,7 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// Protected POST for admin multiple image upload
+// Protected POST for admin multiple image upload into optional folder
 export async function POST(request: NextRequest) {
   const auth = checkAuth(request)
   if (!auth) {
@@ -65,6 +71,9 @@ export async function POST(request: NextRequest) {
     await initializeDatabase()
 
     const formData = await request.formData()
+    // Support target folderId
+    const folderId = (formData.get('folderId') as string) || undefined
+
     // Support multiple files with field name 'images' or 'image'
     const files = formData.getAll('images') as File[]
     const fallbackFiles = formData.getAll('image') as File[]
@@ -95,7 +104,7 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const addedItems = addGalleryImages(base64Images)
+    const addedItems = addGalleryImages(base64Images, folderId)
 
     return NextResponse.json(
       {
