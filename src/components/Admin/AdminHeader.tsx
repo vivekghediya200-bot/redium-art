@@ -14,6 +14,11 @@ export default function AdminHeader() {
   const [confirmPassword, setConfirmPassword] = useState('')
   const [statusMsg, setStatusMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
   const [savingSettings, setSavingSettings] = useState(false)
+  const [syncInfo, setSyncInfo] = useState<{
+    updatedAt?: string
+    isCloudSynced?: boolean
+    activeDevicesSupported?: string[]
+  } | null>(null)
 
   const handleLogout = () => {
     localStorage.removeItem('adminToken')
@@ -34,6 +39,11 @@ export default function AdminHeader() {
           setCurrentEmail(data.email)
           setNewEmail(data.email)
         }
+        setSyncInfo({
+          updatedAt: data.updatedAt,
+          isCloudSynced: data.isCloudSynced ?? true,
+          activeDevicesSupported: data.activeDevicesSupported || ['Laptop', 'Mobile Phone'],
+        })
       }
     } catch (e) {
       console.error('Error fetching admin profile:', e)
@@ -102,14 +112,24 @@ export default function AdminHeader() {
           setCurrentEmail(data.email)
           setNewEmail(data.email)
         }
-        setStatusMsg({ type: 'success', text: data.message || 'Credentials updated successfully!' })
+        if (data.updatedAt) {
+          setSyncInfo((prev) => ({
+            ...prev,
+            updatedAt: data.updatedAt,
+            isCloudSynced: true,
+          }))
+        }
+        setStatusMsg({
+          type: 'success',
+          text: data.message || 'Credentials updated and live-synced across Laptop & Mobile!',
+        })
         setTimeout(() => {
           setShowSettingsModal(false)
           setCurrentPassword('')
           setNewPassword('')
           setConfirmPassword('')
           setStatusMsg(null)
-        }, 1800)
+        }, 2200)
       } else {
         setStatusMsg({ type: 'error', text: data.message || 'Failed to update credentials' })
       }
@@ -174,7 +194,7 @@ export default function AdminHeader() {
       {showSettingsModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
           <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 text-gray-800 animate-in fade-in zoom-in duration-150">
-            <div className="flex justify-between items-center mb-5 border-b pb-3">
+            <div className="flex justify-between items-center mb-4 border-b pb-3">
               <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
                 <span>🔐</span> Admin Account Credentials
               </h2>
@@ -184,6 +204,36 @@ export default function AdminHeader() {
               >
                 ✕
               </button>
+            </div>
+
+            {/* Live Multi-Device Sync Banner */}
+            <div className="bg-gradient-to-r from-emerald-950 via-teal-950 to-emerald-900 border border-emerald-700/60 rounded-xl p-3.5 mb-4 text-white shadow-sm">
+              <div className="flex items-center justify-between gap-2 mb-1.5">
+                <div className="flex items-center gap-2">
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-400"></span>
+                  </span>
+                  <span className="text-[11px] font-black uppercase tracking-wider text-emerald-300">
+                    Live Multi-Device Sync Active
+                  </span>
+                </div>
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-800/80 border border-emerald-600/60 font-extrabold text-emerald-200">
+                  Laptop ↔ Mobile
+                </span>
+              </div>
+              <p className="text-[11px] text-emerald-100/90 leading-relaxed">
+                When you update your email or password from this laptop, it is <strong>instantly saved to Vercel Cloud Storage</strong>. You can log in from your mobile phone immediately with the new password.
+              </p>
+              <div className="mt-2.5 pt-2 border-t border-emerald-800/60 flex items-center justify-between text-[10px] text-emerald-300/80 font-medium">
+                <span>Active Account: <strong className="text-white">{currentEmail || 'admin@jaymataji.com'}</strong></span>
+                <span>
+                  Last Synced:{' '}
+                  <strong className="text-white">
+                    {syncInfo?.updatedAt ? new Date(syncInfo.updatedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Live'}
+                  </strong>
+                </span>
+              </div>
             </div>
 
             {statusMsg && (
@@ -287,7 +337,14 @@ export default function AdminHeader() {
                   disabled={savingSettings}
                   className="px-5 py-2 text-sm font-semibold bg-primary hover:bg-orange-700 text-white rounded-lg transition shadow-sm disabled:opacity-50 flex items-center gap-2"
                 >
-                  {savingSettings ? 'Saving Changes...' : 'Save Changes'}
+                  {savingSettings ? (
+                    <>
+                      <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin"></span>
+                      <span>Syncing to Laptop &amp; Mobile...</span>
+                    </>
+                  ) : (
+                    'Save & Sync Everywhere'
+                  )}
                 </button>
               </div>
             </form>

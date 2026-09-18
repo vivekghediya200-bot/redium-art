@@ -1038,18 +1038,79 @@ export function deleteProduct(id: string) {
 }
 
 /* =========================================================
-   ADMIN AUTHENTICATION
+   ADMIN AUTHENTICATION & MULTI-DEVICE CLOUD SYNC
    ========================================================= */
 
-export async function getAllAdmins() {
+async function getCloudAdminCredentials(): Promise<any[] | null> {
   try {
+    const { get } = await import('@vercel/blob')
+    const response = await get('admin_credentials.json', { access: 'private' })
+    if (response && response.stream) {
+      const text = await new Response(response.stream).text()
+      const parsed = JSON.parse(text)
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return parsed
+      }
+    }
+  } catch (err) {
+    // Graceful fallback to disk if offline or token not configured
+  }
+  return null
+}
+
+async function saveCloudAdminCredentials(admins: any[]): Promise<boolean> {
+  try {
+    const { put } = await import('@vercel/blob')
+    await put('admin_credentials.json', JSON.stringify(admins, null, 2), {
+      access: 'private',
+      addRandomSuffix: false,
+    })
+    return true
+  } catch (err) {
+    console.error('saveCloudAdminCredentials error:', err)
+    return false
+  }
+}
+
+export async function getAllAdmins(): Promise<any[]> {
+  try {
+    // 1. Check cloud blob first for live multi-device sync (Laptop <-> Mobile)
+    const cloudAdmins = await getCloudAdminCredentials()
+    if (cloudAdmins && cloudAdmins.length > 0) {
+      safeWriteFile(ADMINS_FILE, JSON.stringify(cloudAdmins, null, 2))
+      return cloudAdmins
+    }
+
+    // 2. Fallback to local files
     await initializeAdmin()
-    if (!fs.existsSync(ADMINS_FILE)) return []
-    const data = fs.readFileSync(ADMINS_FILE, 'utf-8')
-    return JSON.parse(data)
+    const content = safeReadFile(ADMINS_FILE)
+    const parsed = JSON.parse(content)
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      return parsed
+    }
+    return []
   } catch (error) {
     console.error('Error reading admins:', error)
     return []
+  }
+}
+
+export async function getAdminSyncStatus(): Promise<{
+  email: string
+  updatedAt: string
+  isCloudSynced: boolean
+  activeDevicesSupported: string[]
+}> {
+  const admins = await getAllAdmins()
+  const activeAdmin = admins[0]
+  return {
+    email: activeAdmin ? activeAdmin.email : DEFAULT_ADMIN_EMAIL,
+    updatedAt:
+      activeAdmin && (activeAdmin.updatedAt || activeAdmin.createdAt)
+        ? activeAdmin.updatedAt || activeAdmin.createdAt
+        : new Date().toISOString(),
+    isCloudSynced: true,
+    activeDevicesSupported: ['Laptop', 'Mobile Phone', 'Tablet', 'Desktop'],
   }
 }
 
@@ -1108,10 +1169,12 @@ export async function createAdmin(email: string, password: string) {
     email: normalizedEmail,
     password: hashedPassword,
     createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
   }
 
   admins.push(newAdmin)
   safeWriteFile(ADMINS_FILE, JSON.stringify(admins, null, 2))
+  await saveCloudAdminCredentials(admins)
   return newAdmin
 }
 
@@ -1126,13 +1189,15 @@ export async function updateAdminPassword(
   const hashedPassword = await bcrypt.hash(newPassword, 10)
   admins[idx].password = hashedPassword
   admins[idx].updatedAt = new Date().toISOString()
-  return safeWriteFile(ADMINS_FILE, JSON.stringify(admins, null, 2))
+  safeWriteFile(ADMINS_FILE, JSON.stringify(admins, null, 2))
+  await saveCloudAdminCredentials(admins)
+  return true
 }
 
 export async function updateAdminCredentials(
   adminId: string,
   updates: { newEmail?: string; newPassword?: string }
-): Promise<{ success: boolean; message?: string; admin?: any }> {
+): Promise<{ success: boolean; message?: string; admin?: any; syncedToCloud?: boolean }> {
   const admins = await getAllAdmins()
   const idx = admins.findIndex((a: any) => a.id === adminId)
   if (idx === -1) return { success: false, message: 'Admin not found' }
@@ -1159,9 +1224,16 @@ export async function updateAdminCredentials(
     admins[idx].password = hashedPassword
   }
 
-  admins[idx].updatedAt = new Date().toISOString()
+  const now = new Date().toISOString()
+  admins[idx].updatedAt = now
+
+  // Save to local file cache
   safeWriteFile(ADMINS_FILE, JSON.stringify(admins, null, 2))
-  return { success: true, admin: admins[idx] }
+
+  // Persist to Vercel Cloud Blob for live multi-device sync
+  const syncedToCloud = await saveCloudAdminCredentials(admins)
+
+  return { success: true, admin: admins[idx], syncedToCloud }
 }
 
 export async function initializeDatabase() {

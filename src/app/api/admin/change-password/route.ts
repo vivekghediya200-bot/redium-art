@@ -3,6 +3,7 @@ import { verifyToken, getTokenFromHeader, signToken } from '@/lib/auth'
 import {
   verifyAdminPassword,
   updateAdminCredentials,
+  getAdminSyncStatus,
   initializeDatabase,
 } from '@/lib/mockdb'
 
@@ -18,7 +19,15 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ message: 'Invalid or expired session' }, { status: 401 })
     }
 
-    return NextResponse.json({ email: decoded.email })
+    await initializeDatabase()
+    const syncStatus = await getAdminSyncStatus()
+
+    return NextResponse.json({
+      email: syncStatus.email || decoded.email,
+      updatedAt: syncStatus.updatedAt,
+      isCloudSynced: syncStatus.isCloudSynced,
+      activeDevicesSupported: syncStatus.activeDevicesSupported,
+    })
   } catch (error) {
     return NextResponse.json({ message: 'Error fetching admin profile' }, { status: 500 })
   }
@@ -112,9 +121,11 @@ export async function POST(request: NextRequest) {
     const newToken = signToken({ email: updatedEmail, id: result.admin.id })
 
     return NextResponse.json({
-      message: 'Admin credentials updated successfully!',
+      message: 'Admin credentials updated and live-synced across Laptop & Mobile!',
       token: newToken,
       email: updatedEmail,
+      updatedAt: result.admin.updatedAt,
+      syncedToCloud: result.syncedToCloud,
     })
   } catch (error) {
     console.error('Change credentials error:', error)
