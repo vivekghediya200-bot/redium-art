@@ -29,8 +29,8 @@ export async function GET(request: NextRequest) {
     const customerId = searchParams.get('customerId')
 
     let invoices = customerId
-      ? getInvoicesByCustomerId(customerId)
-      : getAllInvoices()
+      ? await getInvoicesByCustomerId(customerId)
+      : await getAllInvoices()
 
     // Sort by date descending
     invoices.sort(
@@ -72,7 +72,7 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const invoice = createInvoice({
+    const invoice = await createInvoice({
       customerName,
       customerMobile: customerMobile || '',
       viaCustomer: viaCustomer || '',

@@ -23,7 +23,7 @@ export async function GET(
 
   try {
     await initializeDatabase()
-    const customers = getAllCustomers()
+    const customers = await getAllCustomers()
     const customer = customers.find((c) => c.id === params.id)
 
     if (!customer) {
@@ -64,7 +64,7 @@ export async function PUT(
       )
     }
 
-    const updated = updateCustomer(params.id, { name, mobile })
+    const updated = await updateCustomer(params.id, { name, mobile })
 
     if (!updated) {
       return NextResponse.json(
@@ -97,7 +97,7 @@ export async function DELETE(
 
   try {
     await initializeDatabase()
-    const success = deleteCustomer(params.id)
+    const success = await deleteCustomer(params.id)
 
     if (!success) {
       return NextResponse.json(

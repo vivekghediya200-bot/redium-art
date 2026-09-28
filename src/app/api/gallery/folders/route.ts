@@ -27,7 +27,7 @@ export async function GET(request: NextRequest) {
     const publicOnlyParam = searchParams.get('publicOnly')
 
     const isPublicOnly = !auth || publicOnlyParam === 'true'
-    const folders = getAllGalleryFolders(isPublicOnly)
+    const folders = await getAllGalleryFolders(isPublicOnly)
 
     return new NextResponse(JSON.stringify(folders), {
       status: 200,
@@ -66,7 +66,7 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const newFolder = createGalleryFolder(name, Boolean(isPrivate))
+    const newFolder = await createGalleryFolder(name, Boolean(isPrivate))
     return NextResponse.json(
       {
         message: 'Folder created successfully',

@@ -32,7 +32,7 @@ export async function GET(request: NextRequest) {
 
     // If unauthenticated or publicOnly requested, filter out private items and private folders
     const isPublicOnly = !auth || publicOnlyParam === 'true'
-    const images = getAllGalleryImages(isPublicOnly, folderIdParam)
+    const images = await getAllGalleryImages(isPublicOnly, folderIdParam)
 
     let result = images
     if (limitParam) {
@@ -104,7 +104,7 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const addedItems = addGalleryImages(base64Images, folderId)
+    const addedItems = await addGalleryImages(base64Images, folderId)
 
     return NextResponse.json(
       {
@@ -138,7 +138,7 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ message: 'No photo IDs provided' }, { status: 400 })
     }
 
-    const removedCount = deleteMultipleGalleryImages(ids)
+    const removedCount = await deleteMultipleGalleryImages(ids)
     return NextResponse.json({
       message: `${removedCount} photo(s) permanently deleted`,
       count: removedCount,

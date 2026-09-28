@@ -9,7 +9,7 @@ export async function GET(
 ) {
   try {
     await initializeDatabase()
-    const invoice = getInvoiceById(params.id)
+    const invoice = await getInvoiceById(params.id)
 
     if (!invoice) {
       return NextResponse.json(

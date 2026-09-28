@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import {
   getAllCustomers,
-  getInvoicesByCustomerId,
+  getAllInvoices,
   initializeDatabase,
 } from '@/lib/mockdb'
 import { verifyToken, getTokenFromHeader } from '@/lib/auth'
@@ -24,13 +24,21 @@ export async function GET(request: NextRequest) {
 
   try {
     await initializeDatabase()
-    const customers = getAllCustomers()
+    const customers = await getAllCustomers()
+    const allInvoices = await getAllInvoices()
     const { searchParams } = new URL(request.url)
     const query = searchParams.get('q')?.toLowerCase() || ''
 
     // Enrich each customer with their invoices and summary stats
     const enriched = customers.map((cust) => {
-      const invoices = getInvoicesByCustomerId(cust.id)
+      const cleanId = (cust.id || '').trim().toLowerCase()
+      const custName = (cust.name || '').trim().toLowerCase()
+      const invoices = allInvoices.filter((inv) => {
+        const invCustId = (inv.customerId || '').trim().toLowerCase()
+        if (invCustId === cleanId) return true
+        if (custName && (inv.customerName || '').trim().toLowerCase() === custName) return true
+        return false
+      })
       // Sort invoices by date descending (newest first)
       const sortedInvoices = [...invoices].sort(
         (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()

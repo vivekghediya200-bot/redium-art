@@ -33,7 +33,7 @@ export async function PUT(
     const body = await request.json()
     const { name, isPrivate } = body
 
-    const updated = updateGalleryFolder(folderId, {
+    const updated = await updateGalleryFolder(folderId, {
       name: typeof name === 'string' ? name : undefined,
       isPrivate: typeof isPrivate === 'boolean' ? isPrivate : undefined,
     })
@@ -74,7 +74,7 @@ export async function DELETE(
     const { searchParams } = new URL(request.url)
     const deletePhotos = searchParams.get('deletePhotos') === 'true'
 
-    const success = deleteGalleryFolder(folderId, deletePhotos)
+    const success = await deleteGalleryFolder(folderId, deletePhotos)
     if (!success) {
       return NextResponse.json(
         { message: 'Folder not found' },

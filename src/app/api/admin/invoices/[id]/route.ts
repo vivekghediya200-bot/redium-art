@@ -21,7 +21,7 @@ export async function GET(
 
   try {
     await initializeDatabase()
-    const invoice = getInvoiceById(params.id)
+    const invoice = await getInvoiceById(params.id)
 
     if (!invoice) {
       return NextResponse.json(
@@ -52,7 +52,7 @@ export async function PUT(
   try {
     await initializeDatabase()
     const body = await request.json()
-    const updated = updateInvoice(params.id, body)
+    const updated = await updateInvoice(params.id, body)
 
     if (!updated) {
       return NextResponse.json(
@@ -85,7 +85,7 @@ export async function DELETE(
 
   try {
     await initializeDatabase()
-    const success = deleteInvoice(params.id)
+    const success = await deleteInvoice(params.id)
 
     if (!success) {
       return NextResponse.json(

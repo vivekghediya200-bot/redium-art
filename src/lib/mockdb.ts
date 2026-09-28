@@ -20,6 +20,14 @@ const CUSTOMERS_FILE = path.join(DATA_DIR, 'customers.json')
 const INVOICES_FILE = path.join(DATA_DIR, 'invoices.json')
 const ADMINS_FILE = path.join(DATA_DIR, 'admins.json')
 
+// Cloud Blob Pathnames
+export const CLOUD_INVOICES_PATH = 'invoices.json'
+export const CLOUD_CUSTOMERS_PATH = 'customers.json'
+export const CLOUD_GALLERY_PATH = 'gallery.json'
+export const CLOUD_FOLDERS_PATH = 'gallery_folders.json'
+export const CLOUD_DELETED_GALLERY_PATH = 'deleted_gallery.json'
+export const CLOUD_ADMINS_PATH = 'admin_credentials.json'
+
 function ensureDirAndSeed() {
   try {
     if (!fs.existsSync(DATA_DIR)) {
@@ -114,6 +122,52 @@ function safeWriteFile(filePath: string, content: string): boolean {
   }
 }
 
+/* =========================================================
+   VERCEL CLOUD BLOB RESILIENT READ / WRITE HELPERS
+   ========================================================= */
+
+export async function readFromCloudBlob<T>(pathname: string, fallback: T): Promise<T> {
+  try {
+    const { get } = await import('@vercel/blob')
+    const response = await get(pathname, { access: 'private' })
+    if (response && response.stream) {
+      const text = await new Response(response.stream).text()
+      if (text && text.trim()) {
+        return JSON.parse(text) as T
+      }
+    }
+  } catch (err: any) {
+    // Expected fallback if offline, store not configured, or blob does not exist yet
+  }
+  return fallback
+}
+
+export async function writeToCloudBlob<T>(
+  pathname: string,
+  data: T,
+  localFilePath?: string
+): Promise<boolean> {
+  if (localFilePath) {
+    safeWriteFile(localFilePath, JSON.stringify(data, null, 2))
+  }
+  try {
+    const { put } = await import('@vercel/blob')
+    await put(pathname, JSON.stringify(data, null, 2), {
+      access: 'private',
+      addRandomSuffix: false,
+      allowOverwrite: true,
+    })
+    return true
+  } catch (err) {
+    console.error(`writeToCloudBlob error for ${pathname}:`, err)
+    return false
+  }
+}
+
+/* =========================================================
+   INTERFACES
+   ========================================================= */
+
 export interface GalleryFolder {
   id: string
   name: string
@@ -175,9 +229,24 @@ export interface Invoice {
 const DEFAULT_ADMIN_EMAIL = (process.env.ADMIN_EMAIL || 'admin@jaymataji.com').toLowerCase().trim()
 const DEFAULT_ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'Admin@123'
 
+// In-memory cache variables for instant responses
+let inMemoryInvoicesCache: Invoice[] | null = null
+let inMemoryCustomersCache: Customer[] | null = null
+let inMemoryFoldersCache: GalleryFolder[] | null = null
+let inMemoryDeletedGalleryCache: DeletedGalleryItem[] | null = null
+let inMemoryGalleryCache: GalleryItem[] | null = null
+let inMemoryGalleryMtime = 0
+
 // Initialize default admin if not exists
 async function initializeAdmin(): Promise<void> {
   let admins: any[] = []
+  const cloudAdmins = await getCloudAdminCredentials()
+  if (cloudAdmins && cloudAdmins.length > 0) {
+    admins = cloudAdmins
+    safeWriteFile(ADMINS_FILE, JSON.stringify(admins, null, 2))
+    return
+  }
+
   if (fs.existsSync(ADMINS_FILE)) {
     try {
       const content = safeReadFile(ADMINS_FILE)
@@ -199,10 +268,11 @@ async function initializeAdmin(): Promise<void> {
       },
     ]
     safeWriteFile(ADMINS_FILE, JSON.stringify(admins, null, 2))
+    await saveCloudAdminCredentials(admins)
   }
 }
 
-// Initialize default files
+// Initialize default files locally
 function initializeFiles(): void {
   ensureDirAndSeed()
   if (!fs.existsSync(PRODUCTS_FILE)) {
@@ -212,7 +282,6 @@ function initializeFiles(): void {
 
   if (!fs.existsSync(GALLERY_FILE)) {
     const initialGallery: GalleryItem[] = []
-    // Seed from existing products if present
     if (fs.existsSync(PRODUCTS_FILE)) {
       try {
         const prodData = JSON.parse(safeReadFile(PRODUCTS_FILE))
@@ -288,19 +357,34 @@ function initializeFiles(): void {
    DELETED GALLERY TOMBSTONE & LIVE TRACKING
    ========================================================= */
 
-export function getDeletedGalleryItems(): DeletedGalleryItem[] {
+export async function getDeletedGalleryItems(): Promise<DeletedGalleryItem[]> {
   try {
-    initializeFiles()
+    const cloud = await readFromCloudBlob<DeletedGalleryItem[] | null>(
+      CLOUD_DELETED_GALLERY_PATH,
+      null
+    )
+    if (Array.isArray(cloud)) {
+      inMemoryDeletedGalleryCache = cloud
+      safeWriteFile(DELETED_GALLERY_FILE, JSON.stringify(cloud, null, 2))
+      return cloud
+    }
+  } catch {}
+
+  if (inMemoryDeletedGalleryCache) return inMemoryDeletedGalleryCache
+  initializeFiles()
+  try {
     const content = safeReadFile(DELETED_GALLERY_FILE)
     const parsed = JSON.parse(content)
-    return Array.isArray(parsed) ? parsed : []
-  } catch {
-    return []
-  }
+    if (Array.isArray(parsed)) {
+      inMemoryDeletedGalleryCache = parsed
+      return parsed
+    }
+  } catch {}
+  return []
 }
 
-export function getDeletedGalleryIdSet(): Set<string> {
-  const items = getDeletedGalleryItems()
+export async function getDeletedGalleryIdSet(): Promise<Set<string>> {
+  const items = await getDeletedGalleryItems()
   const set = new Set<string>()
   for (const item of items) {
     if (item && item.id) {
@@ -310,9 +394,9 @@ export function getDeletedGalleryIdSet(): Set<string> {
   return set
 }
 
-export function recordPhotoDeletions(ids: string[]): number {
+export async function recordPhotoDeletions(ids: string[]): Promise<number> {
   if (!ids || ids.length === 0) return 0
-  const existing = getDeletedGalleryItems()
+  const existing = await getDeletedGalleryItems()
   const existingSet = new Set(existing.map((x) => String(x.id).trim().toLowerCase()))
   const now = new Date().toISOString()
   let newlyRecorded = 0
@@ -330,20 +414,21 @@ export function recordPhotoDeletions(ids: string[]): number {
   }
 
   if (newlyRecorded > 0) {
-    safeWriteFile(DELETED_GALLERY_FILE, JSON.stringify(existing, null, 2))
+    inMemoryDeletedGalleryCache = existing
+    await writeToCloudBlob(CLOUD_DELETED_GALLERY_PATH, existing, DELETED_GALLERY_FILE)
   }
   return newlyRecorded
 }
 
-export function getDeletedPhotosStats(): {
+export async function getDeletedPhotosStats(): Promise<{
   totalCount: number
   activeCount: number
   totalHistorical: number
   deletionPercentage: number
   recentDeletions: DeletedGalleryItem[]
-} {
-  const items = getDeletedGalleryItems()
-  const activePhotos = getAllGalleryImages(false)
+}> {
+  const items = await getDeletedGalleryItems()
+  const activePhotos = await getAllGalleryImages(false)
   const totalHistorical = items.length + activePhotos.length
   const deletionPercentage =
     totalHistorical > 0 ? Math.round((items.length / totalHistorical) * 100) : 0
@@ -361,59 +446,71 @@ export function getDeletedPhotosStats(): {
    GALLERY FOLDERS
    ========================================================= */
 
-export function getAllGalleryFolders(publicOnly = false): GalleryFolder[] {
+export async function getAllGalleryFolders(publicOnly = false): Promise<GalleryFolder[]> {
   try {
-    initializeFiles()
-    const content = safeReadFile(GALLERY_FOLDERS_FILE)
-    const parsed = JSON.parse(content)
-    let folders: GalleryFolder[] = Array.isArray(parsed) ? parsed : []
-
-    if (folders.length === 0) {
-      folders = [
-        {
-          id: 'folder_truck_fitting',
-          name: 'Truck Show Fitting',
-          isPrivate: false,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        },
-        {
-          id: 'folder_radium_art',
-          name: 'Radium Art & Stickers',
-          isPrivate: false,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        },
-        {
-          id: 'folder_number_plates',
-          name: 'Number Plates & Monograms',
-          isPrivate: false,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        },
-        {
-          id: 'folder_private_drafts',
-          name: 'Private Designs & Samples',
-          isPrivate: true,
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        },
-      ]
-      safeWriteFile(GALLERY_FOLDERS_FILE, JSON.stringify(folders, null, 2))
+    const cloud = await readFromCloudBlob<GalleryFolder[] | null>(CLOUD_FOLDERS_PATH, null)
+    if (Array.isArray(cloud) && cloud.length > 0) {
+      inMemoryFoldersCache = cloud
+      safeWriteFile(GALLERY_FOLDERS_FILE, JSON.stringify(cloud, null, 2))
+      return publicOnly ? cloud.filter((f) => !f.isPrivate) : cloud
     }
+  } catch {}
 
-    if (publicOnly) {
-      return folders.filter((f) => !f.isPrivate)
-    }
-    return folders
-  } catch (err) {
-    console.error('Error reading gallery folders:', err)
-    return []
+  if (inMemoryFoldersCache && inMemoryFoldersCache.length > 0) {
+    return publicOnly ? inMemoryFoldersCache.filter((f) => !f.isPrivate) : inMemoryFoldersCache
   }
+
+  initializeFiles()
+  const content = safeReadFile(GALLERY_FOLDERS_FILE)
+  let folders: GalleryFolder[] = []
+  try {
+    const parsed = JSON.parse(content)
+    if (Array.isArray(parsed)) folders = parsed
+  } catch {}
+
+  if (folders.length === 0) {
+    folders = [
+      {
+        id: 'folder_truck_fitting',
+        name: 'Truck Show Fitting',
+        isPrivate: false,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+      {
+        id: 'folder_radium_art',
+        name: 'Radium Art & Stickers',
+        isPrivate: false,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+      {
+        id: 'folder_number_plates',
+        name: 'Number Plates & Monograms',
+        isPrivate: false,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+      {
+        id: 'folder_private_drafts',
+        name: 'Private Designs & Samples',
+        isPrivate: true,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      },
+    ]
+    await writeToCloudBlob(CLOUD_FOLDERS_PATH, folders, GALLERY_FOLDERS_FILE)
+  }
+
+  inMemoryFoldersCache = folders
+  if (publicOnly) {
+    return folders.filter((f) => !f.isPrivate)
+  }
+  return folders
 }
 
-export function createGalleryFolder(name: string, isPrivate = false): GalleryFolder {
-  const folders = getAllGalleryFolders()
+export async function createGalleryFolder(name: string, isPrivate = false): Promise<GalleryFolder> {
+  const folders = await getAllGalleryFolders()
   const trimmedName = name.trim()
   const newFolder: GalleryFolder = {
     id: `folder_${Date.now()}`,
@@ -423,15 +520,16 @@ export function createGalleryFolder(name: string, isPrivate = false): GalleryFol
     updatedAt: new Date().toISOString(),
   }
   folders.push(newFolder)
-  safeWriteFile(GALLERY_FOLDERS_FILE, JSON.stringify(folders, null, 2))
+  inMemoryFoldersCache = folders
+  await writeToCloudBlob(CLOUD_FOLDERS_PATH, folders, GALLERY_FOLDERS_FILE)
   return newFolder
 }
 
-export function updateGalleryFolder(
+export async function updateGalleryFolder(
   id: string,
   updates: { name?: string; isPrivate?: boolean }
-): GalleryFolder | null {
-  const folders = getAllGalleryFolders()
+): Promise<GalleryFolder | null> {
+  const folders = await getAllGalleryFolders()
   const cleanId = id.trim().toLowerCase()
   const index = folders.findIndex((f) => f.id.trim().toLowerCase() === cleanId)
   if (index === -1) return null
@@ -444,11 +542,12 @@ export function updateGalleryFolder(
     updatedAt: new Date().toISOString(),
   }
   folders[index] = updatedFolder
-  safeWriteFile(GALLERY_FOLDERS_FILE, JSON.stringify(folders, null, 2))
+  inMemoryFoldersCache = folders
+  await writeToCloudBlob(CLOUD_FOLDERS_PATH, folders, GALLERY_FOLDERS_FILE)
 
   // If folder privacy changed, sync isPrivate flag of all images in that folder
   if (updates.isPrivate !== undefined) {
-    const images = getAllGalleryImages(false)
+    const images = await getAllGalleryImages(false)
     let imagesModified = false
     for (const img of images) {
       if (img.folderId && img.folderId.trim().toLowerCase() === cleanId) {
@@ -459,29 +558,30 @@ export function updateGalleryFolder(
     if (imagesModified) {
       inMemoryGalleryCache = images
       inMemoryGalleryMtime = Date.now()
-      safeWriteFile(GALLERY_FILE, JSON.stringify(images))
+      await writeToCloudBlob(CLOUD_GALLERY_PATH, images, GALLERY_FILE)
     }
   }
 
   return updatedFolder
 }
 
-export function deleteGalleryFolder(id: string, deletePhotos = false): boolean {
-  const folders = getAllGalleryFolders()
+export async function deleteGalleryFolder(id: string, deletePhotos = false): Promise<boolean> {
+  const folders = await getAllGalleryFolders()
   const cleanId = id.trim().toLowerCase()
   const filtered = folders.filter((f) => f.id.trim().toLowerCase() !== cleanId)
   if (filtered.length === folders.length) return false
 
-  safeWriteFile(GALLERY_FOLDERS_FILE, JSON.stringify(filtered, null, 2))
+  inMemoryFoldersCache = filtered
+  await writeToCloudBlob(CLOUD_FOLDERS_PATH, filtered, GALLERY_FOLDERS_FILE)
 
   // Handle images inside the deleted folder
-  const images = getAllGalleryImages(false)
+  const images = await getAllGalleryImages(false)
   if (deletePhotos) {
     const imagesToDelete = images.filter(
       (img) => img.folderId && img.folderId.trim().toLowerCase() === cleanId
     )
     if (imagesToDelete.length > 0) {
-      deleteMultipleGalleryImages(imagesToDelete.map((img) => img.id))
+      await deleteMultipleGalleryImages(imagesToDelete.map((img) => img.id))
     }
   } else {
     // Move photos to Uncategorized
@@ -496,17 +596,20 @@ export function deleteGalleryFolder(id: string, deletePhotos = false): boolean {
     if (modified) {
       inMemoryGalleryCache = images
       inMemoryGalleryMtime = Date.now()
-      safeWriteFile(GALLERY_FILE, JSON.stringify(images))
+      await writeToCloudBlob(CLOUD_GALLERY_PATH, images, GALLERY_FILE)
     }
   }
 
   return true
 }
 
-export function moveGalleryImagesToFolder(imageIds: string[], targetFolderId?: string): number {
-  const images = getAllGalleryImages(false)
+export async function moveGalleryImagesToFolder(
+  imageIds: string[],
+  targetFolderId?: string
+): Promise<number> {
+  const images = await getAllGalleryImages(false)
   const idSet = new Set(imageIds.map((id) => decodeURIComponent(id).trim().toLowerCase()))
-  const folders = getAllGalleryFolders()
+  const folders = await getAllGalleryFolders()
   const targetFolder = targetFolderId
     ? folders.find((f) => f.id.trim().toLowerCase() === targetFolderId.trim().toLowerCase())
     : null
@@ -529,7 +632,7 @@ export function moveGalleryImagesToFolder(imageIds: string[], targetFolderId?: s
   if (updatedCount > 0) {
     inMemoryGalleryCache = images
     inMemoryGalleryMtime = Date.now()
-    safeWriteFile(GALLERY_FILE, JSON.stringify(images))
+    await writeToCloudBlob(CLOUD_GALLERY_PATH, images, GALLERY_FILE)
   }
   return updatedCount
 }
@@ -538,34 +641,31 @@ export function moveGalleryImagesToFolder(imageIds: string[], targetFolderId?: s
    GALLERY (Multi-Image Showcase)
    ========================================================= */
 
-let inMemoryGalleryCache: GalleryItem[] | null = null
-let inMemoryGalleryMtime = 0
-
-export function getAllGalleryImages(publicOnly = false, folderId?: string): GalleryItem[] {
+export async function getAllGalleryImages(
+  publicOnly = false,
+  folderId?: string
+): Promise<GalleryItem[]> {
   try {
-    initializeFiles()
-    let currentMtime = 0
-    try {
-      if (fs.existsSync(GALLERY_FILE)) {
-        currentMtime = fs.statSync(GALLERY_FILE).mtimeMs
-      }
-    } catch {}
-
+    // 1. Try reading from Cloud Blob first
+    const cloud = await readFromCloudBlob<GalleryItem[] | null>(CLOUD_GALLERY_PATH, null)
     let items: GalleryItem[] = []
-    if (inMemoryGalleryCache && inMemoryGalleryMtime === currentMtime && currentMtime > 0) {
+    if (Array.isArray(cloud)) {
+      items = cloud
+      inMemoryGalleryCache = cloud
+    } else if (inMemoryGalleryCache) {
       items = inMemoryGalleryCache
     } else {
+      initializeFiles()
       const data = safeReadFile(GALLERY_FILE)
       const parsed = JSON.parse(data)
       if (Array.isArray(parsed)) {
         items = parsed
         inMemoryGalleryCache = parsed
-        inMemoryGalleryMtime = currentMtime
       }
     }
 
     // Always filter out any tombstoned/deleted photo IDs
-    const deletedIdSet = getDeletedGalleryIdSet()
+    const deletedIdSet = await getDeletedGalleryIdSet()
     if (deletedIdSet.size > 0) {
       const originalCount = items.length
       items = items.filter((item) => {
@@ -575,12 +675,12 @@ export function getAllGalleryImages(publicOnly = false, folderId?: string): Gall
       if (items.length !== originalCount) {
         inMemoryGalleryCache = items
         inMemoryGalleryMtime = Date.now()
-        safeWriteFile(GALLERY_FILE, JSON.stringify(items))
+        await writeToCloudBlob(CLOUD_GALLERY_PATH, items, GALLERY_FILE)
       }
     }
 
     // Determine private folders
-    const folders = getAllGalleryFolders()
+    const folders = await getAllGalleryFolders()
     const privateFolderIdSet = new Set(
       folders.filter((f) => f.isPrivate).map((f) => f.id.trim().toLowerCase())
     )
@@ -615,11 +715,14 @@ export function getAllGalleryImages(publicOnly = false, folderId?: string): Gall
   }
 }
 
-export function addGalleryImages(images: string[], folderId?: string): GalleryItem[] {
-  const current = getAllGalleryImages(false)
+export async function addGalleryImages(
+  images: string[],
+  folderId?: string
+): Promise<GalleryItem[]> {
+  const current = await getAllGalleryImages(false)
   let targetFolder: GalleryFolder | undefined
   if (folderId && folderId !== 'all' && folderId !== 'uncategorized') {
-    const folders = getAllGalleryFolders()
+    const folders = await getAllGalleryFolders()
     targetFolder = folders.find((f) => f.id.trim().toLowerCase() === folderId.trim().toLowerCase())
   }
 
@@ -633,14 +736,14 @@ export function addGalleryImages(images: string[], folderId?: string): GalleryIt
   const updated = [...newItems, ...current]
   inMemoryGalleryCache = updated
   inMemoryGalleryMtime = Date.now()
-  safeWriteFile(GALLERY_FILE, JSON.stringify(updated))
+  await writeToCloudBlob(CLOUD_GALLERY_PATH, updated, GALLERY_FILE)
   return newItems
 }
 
-export function deleteGalleryImage(id: string): boolean {
+export async function deleteGalleryImage(id: string): Promise<boolean> {
   const cleanId = decodeURIComponent(String(id || '')).trim()
-  recordPhotoDeletions([cleanId])
-  const current = getAllGalleryImages(false)
+  await recordPhotoDeletions([cleanId])
+  const current = await getAllGalleryImages(false)
   const filtered = current.filter((item) => {
     const itemId = String(item.id || '').trim()
     return itemId !== cleanId && itemId !== String(id).trim()
@@ -648,13 +751,14 @@ export function deleteGalleryImage(id: string): boolean {
   if (filtered.length === current.length) return false
   inMemoryGalleryCache = filtered
   inMemoryGalleryMtime = Date.now()
-  return safeWriteFile(GALLERY_FILE, JSON.stringify(filtered))
+  await writeToCloudBlob(CLOUD_GALLERY_PATH, filtered, GALLERY_FILE)
+  return true
 }
 
-export function deleteMultipleGalleryImages(ids: string[]): number {
+export async function deleteMultipleGalleryImages(ids: string[]): Promise<number> {
   if (!ids || ids.length === 0) return 0
-  recordPhotoDeletions(ids)
-  const current = getAllGalleryImages(false)
+  await recordPhotoDeletions(ids)
+  const current = await getAllGalleryImages(false)
   const cleanIdSet = new Set(
     ids.map((id) => decodeURIComponent(String(id || '')).trim().toLowerCase())
   )
@@ -666,7 +770,7 @@ export function deleteMultipleGalleryImages(ids: string[]): number {
   if (removedCount > 0) {
     inMemoryGalleryCache = filtered
     inMemoryGalleryMtime = Date.now()
-    safeWriteFile(GALLERY_FILE, JSON.stringify(filtered))
+    await writeToCloudBlob(CLOUD_GALLERY_PATH, filtered, GALLERY_FILE)
   }
   return removedCount
 }
@@ -675,29 +779,41 @@ export function deleteMultipleGalleryImages(ids: string[]): number {
    CUSTOMERS
    ========================================================= */
 
-export function getAllCustomers(): Customer[] {
+export async function getAllCustomers(): Promise<Customer[]> {
   try {
-    initializeFiles()
+    const cloud = await readFromCloudBlob<Customer[] | null>(CLOUD_CUSTOMERS_PATH, null)
+    if (Array.isArray(cloud)) {
+      inMemoryCustomersCache = cloud
+      safeWriteFile(CUSTOMERS_FILE, JSON.stringify(cloud, null, 2))
+      return cloud
+    }
+  } catch (error) {
+    console.error('Error reading customers from cloud:', error)
+  }
+
+  if (inMemoryCustomersCache) return inMemoryCustomersCache
+  initializeFiles()
+  try {
     const data = safeReadFile(CUSTOMERS_FILE)
     const parsed = JSON.parse(data)
-    return Array.isArray(parsed) ? parsed : []
-  } catch (error) {
-    console.error('Error reading customers:', error)
-    return []
-  }
+    if (Array.isArray(parsed)) {
+      inMemoryCustomersCache = parsed
+      return parsed
+    }
+  } catch {}
+  return []
 }
 
-export function getCustomerById(id: string): Customer | undefined {
-  const customers = getAllCustomers()
+export async function getCustomerById(id: string): Promise<Customer | undefined> {
+  const customers = await getAllCustomers()
   return customers.find((c) => c.id === id)
 }
 
-export function findOrCreateCustomer(name?: string, mobile?: string): Customer {
-  const customers = getAllCustomers()
+export async function findOrCreateCustomer(name?: string, mobile?: string): Promise<Customer> {
+  const customers = await getAllCustomers()
   const trimmedName = String(name || '').trim()
   const trimmedMobile = String(mobile || '').trim()
 
-  // Match by mobile or exact name safely
   let existing = customers.find(
     (c) =>
       (trimmedMobile && c.mobile && c.mobile === trimmedMobile) ||
@@ -705,7 +821,6 @@ export function findOrCreateCustomer(name?: string, mobile?: string): Customer {
   )
 
   if (existing) {
-    // Update name or phone if provided
     let updated = false
     if (trimmedName && existing.name !== trimmedName) {
       existing.name = trimmedName
@@ -717,7 +832,8 @@ export function findOrCreateCustomer(name?: string, mobile?: string): Customer {
     }
     if (updated) {
       existing.updatedAt = new Date().toISOString()
-      safeWriteFile(CUSTOMERS_FILE, JSON.stringify(customers, null, 2))
+      inMemoryCustomersCache = customers
+      await writeToCloudBlob(CLOUD_CUSTOMERS_PATH, customers, CUSTOMERS_FILE)
     }
     return existing
   }
@@ -731,15 +847,16 @@ export function findOrCreateCustomer(name?: string, mobile?: string): Customer {
   }
 
   customers.push(newCustomer)
-  safeWriteFile(CUSTOMERS_FILE, JSON.stringify(customers, null, 2))
+  inMemoryCustomersCache = customers
+  await writeToCloudBlob(CLOUD_CUSTOMERS_PATH, customers, CUSTOMERS_FILE)
   return newCustomer
 }
 
-export function updateCustomer(
+export async function updateCustomer(
   id: string,
   data: { name?: string; mobile?: string }
-): Customer | null {
-  const customers = getAllCustomers()
+): Promise<Customer | null> {
+  const customers = await getAllCustomers()
   const index = customers.findIndex((c) => c.id === id)
   if (index === -1) return null
 
@@ -753,10 +870,11 @@ export function updateCustomer(
     updatedAt: new Date().toISOString(),
   }
 
-  safeWriteFile(CUSTOMERS_FILE, JSON.stringify(customers, null, 2))
+  inMemoryCustomersCache = customers
+  await writeToCloudBlob(CLOUD_CUSTOMERS_PATH, customers, CUSTOMERS_FILE)
 
   // Also update all invoices associated with this customer
-  const invoices = getAllInvoices()
+  const invoices = await getAllInvoices()
   let invoicesUpdated = false
   for (let i = 0; i < invoices.length; i++) {
     if (invoices[i].customerId === id) {
@@ -767,23 +885,25 @@ export function updateCustomer(
     }
   }
   if (invoicesUpdated) {
-    safeWriteFile(INVOICES_FILE, JSON.stringify(invoices, null, 2))
+    inMemoryInvoicesCache = invoices
+    await writeToCloudBlob(CLOUD_INVOICES_PATH, invoices, INVOICES_FILE)
   }
 
   return customers[index]
 }
 
-export function deleteCustomer(id: string): boolean {
+export async function deleteCustomer(id: string): Promise<boolean> {
   try {
-    const customers = getAllCustomers()
+    const customers = await getAllCustomers()
     const cleanId = decodeURIComponent(String(id || '')).trim().toLowerCase()
     const target = customers.find((c) => (c.id || '').trim().toLowerCase() === cleanId)
     const filtered = customers.filter((c) => (c.id || '').trim().toLowerCase() !== cleanId)
     if (filtered.length === customers.length) return false
-    safeWriteFile(CUSTOMERS_FILE, JSON.stringify(filtered, null, 2))
+    inMemoryCustomersCache = filtered
+    await writeToCloudBlob(CLOUD_CUSTOMERS_PATH, filtered, CUSTOMERS_FILE)
 
     // Also delete all invoices for this customer by customerId or customerName
-    const invoices = getAllInvoices()
+    const invoices = await getAllInvoices()
     const targetName = target?.name?.trim().toLowerCase()
     const filteredInvoices = invoices.filter((inv) => {
       const invCustId = (inv.customerId || '').trim().toLowerCase()
@@ -792,7 +912,8 @@ export function deleteCustomer(id: string): boolean {
       if (targetName && invCustName === targetName) return false
       return true
     })
-    safeWriteFile(INVOICES_FILE, JSON.stringify(filteredInvoices, null, 2))
+    inMemoryInvoicesCache = filteredInvoices
+    await writeToCloudBlob(CLOUD_INVOICES_PATH, filteredInvoices, INVOICES_FILE)
 
     return true
   } catch (err) {
@@ -805,27 +926,57 @@ export function deleteCustomer(id: string): boolean {
    INVOICES / BILLING
    ========================================================= */
 
-export function getAllInvoices(): Invoice[] {
+export async function getAllInvoices(): Promise<Invoice[]> {
   try {
-    initializeFiles()
+    // 1. Try reading from Cloud Blob first for 100% live consistency across all containers & devices
+    const cloudInvoices = await readFromCloudBlob<Invoice[] | null>(CLOUD_INVOICES_PATH, null)
+    if (Array.isArray(cloudInvoices)) {
+      inMemoryInvoicesCache = cloudInvoices
+      safeWriteFile(INVOICES_FILE, JSON.stringify(cloudInvoices, null, 2))
+      return cloudInvoices
+    }
+  } catch (error) {
+    console.error('Error reading invoices from cloud:', error)
+  }
+
+  // 2. Fallback to in-memory cache or local file
+  if (inMemoryInvoicesCache) return inMemoryInvoicesCache
+  initializeFiles()
+  try {
     const data = safeReadFile(INVOICES_FILE)
     const parsed = JSON.parse(data)
-    return Array.isArray(parsed) ? parsed : []
-  } catch (error) {
-    console.error('Error reading invoices:', error)
-    return []
-  }
+    if (Array.isArray(parsed)) {
+      inMemoryInvoicesCache = parsed
+      return parsed
+    }
+  } catch {}
+  return []
 }
 
-export function getInvoiceById(id: string): Invoice | undefined {
-  const invoices = getAllInvoices()
-  return invoices.find((inv) => inv.id.trim().toLowerCase() === id.trim().toLowerCase())
+export async function getInvoiceById(id: string): Promise<Invoice | undefined> {
+  const cleanId = id.trim().toLowerCase()
+  const invoices = await getAllInvoices()
+  let found = invoices.find((inv) => inv.id.trim().toLowerCase() === cleanId)
+  if (found) return found
+
+  // Direct forced query to Cloud Blob to ensure zero latency misses across containers
+  try {
+    const cloudInvoices = await readFromCloudBlob<Invoice[] | null>(CLOUD_INVOICES_PATH, null)
+    if (Array.isArray(cloudInvoices)) {
+      inMemoryInvoicesCache = cloudInvoices
+      safeWriteFile(INVOICES_FILE, JSON.stringify(cloudInvoices, null, 2))
+      found = cloudInvoices.find((inv) => inv.id.trim().toLowerCase() === cleanId)
+      if (found) return found
+    }
+  } catch {}
+
+  return undefined
 }
 
-export function getInvoicesByCustomerId(customerId: string): Invoice[] {
-  const invoices = getAllInvoices()
+export async function getInvoicesByCustomerId(customerId: string): Promise<Invoice[]> {
+  const invoices = await getAllInvoices()
   const cleanId = (customerId || '').trim().toLowerCase()
-  const customers = getAllCustomers()
+  const customers = await getAllCustomers()
   const cust = customers.find((c) => (c.id || '').trim().toLowerCase() === cleanId)
   const custName = cust?.name?.trim().toLowerCase()
 
@@ -837,7 +988,7 @@ export function getInvoicesByCustomerId(customerId: string): Invoice[] {
   })
 }
 
-export function createInvoice(data: {
+export async function createInvoice(data: {
   customerName: string
   customerMobile?: string
   viaCustomer?: string
@@ -846,9 +997,9 @@ export function createInvoice(data: {
   notes?: string
   paymentStatus?: 'PAID' | 'PENDING'
   paymentMethod?: 'CASH' | 'UPI' | 'CARD'
-}): Invoice {
-  const customer = findOrCreateCustomer(data.customerName, data.customerMobile)
-  const invoices = getAllInvoices()
+}): Promise<Invoice> {
+  const customer = await findOrCreateCustomer(data.customerName, data.customerMobile)
+  const invoices = await getAllInvoices()
 
   // Calculate maximum existing invoice number to guarantee strictly unique ID
   const maxNumber = invoices.reduce((max, inv) => {
@@ -901,11 +1052,12 @@ export function createInvoice(data: {
   }
 
   invoices.unshift(newInvoice)
-  safeWriteFile(INVOICES_FILE, JSON.stringify(invoices, null, 2))
+  inMemoryInvoicesCache = invoices
+  await writeToCloudBlob(CLOUD_INVOICES_PATH, invoices, INVOICES_FILE)
   return newInvoice
 }
 
-export function updateInvoice(
+export async function updateInvoice(
   id: string,
   data: {
     customerName?: string
@@ -917,15 +1069,15 @@ export function updateInvoice(
     paymentStatus?: 'PAID' | 'PENDING'
     paymentMethod?: 'CASH' | 'UPI' | 'CARD'
   }
-): Invoice | null {
-  const invoices = getAllInvoices()
+): Promise<Invoice | null> {
+  const invoices = await getAllInvoices()
   const cleanId = id.trim().toLowerCase()
   const index = invoices.findIndex((inv) => inv.id.trim().toLowerCase() === cleanId)
   if (index === -1) return null
 
   const existing = invoices[index]
   const customer = data.customerName
-    ? findOrCreateCustomer(data.customerName, data.customerMobile || existing.customerMobile)
+    ? await findOrCreateCustomer(data.customerName, data.customerMobile || existing.customerMobile)
     : null
 
   let items = existing.items
@@ -950,7 +1102,7 @@ export function updateInvoice(
 
   const updatedInvoice: Invoice = {
     ...existing,
-    customerName: customer ? customer.name : existing.customerName,
+    customerName: customer ? customer.name : (data.customerName !== undefined ? data.customerName.trim() : existing.customerName),
     customerMobile: customer ? customer.mobile : (data.customerMobile !== undefined ? data.customerMobile : existing.customerMobile),
     customerId: customer ? customer.id : existing.customerId,
     viaCustomer: data.viaCustomer !== undefined ? data.viaCustomer.trim() : (existing.viaCustomer || ''),
@@ -966,17 +1118,20 @@ export function updateInvoice(
   }
 
   invoices[index] = updatedInvoice
-  safeWriteFile(INVOICES_FILE, JSON.stringify(invoices, null, 2))
+  inMemoryInvoicesCache = invoices
+  await writeToCloudBlob(CLOUD_INVOICES_PATH, invoices, INVOICES_FILE)
   return updatedInvoice
 }
 
-export function deleteInvoice(id: string): boolean {
+export async function deleteInvoice(id: string): Promise<boolean> {
   try {
-    const invoices = getAllInvoices()
+    const invoices = await getAllInvoices()
     const cleanId = decodeURIComponent(String(id || '')).trim().toLowerCase()
     const filtered = invoices.filter((inv) => (inv.id || '').trim().toLowerCase() !== cleanId)
     if (filtered.length === invoices.length) return false
-    return safeWriteFile(INVOICES_FILE, JSON.stringify(filtered, null, 2))
+    inMemoryInvoicesCache = filtered
+    await writeToCloudBlob(CLOUD_INVOICES_PATH, filtered, INVOICES_FILE)
+    return true
   } catch (e) {
     console.error('Error deleting invoice:', e)
     return false
@@ -1044,7 +1199,7 @@ export function deleteProduct(id: string) {
 async function getCloudAdminCredentials(): Promise<any[] | null> {
   try {
     const { get } = await import('@vercel/blob')
-    const response = await get('admin_credentials.json', { access: 'private' })
+    const response = await get(CLOUD_ADMINS_PATH, { access: 'private' })
     if (response && response.stream) {
       const text = await new Response(response.stream).text()
       const parsed = JSON.parse(text)
@@ -1061,9 +1216,10 @@ async function getCloudAdminCredentials(): Promise<any[] | null> {
 async function saveCloudAdminCredentials(admins: any[]): Promise<boolean> {
   try {
     const { put } = await import('@vercel/blob')
-    await put('admin_credentials.json', JSON.stringify(admins, null, 2), {
+    await put(CLOUD_ADMINS_PATH, JSON.stringify(admins, null, 2), {
       access: 'private',
       addRandomSuffix: false,
+      allowOverwrite: true,
     })
     return true
   } catch (err) {
@@ -1239,4 +1395,37 @@ export async function updateAdminCredentials(
 export async function initializeDatabase() {
   await initializeAdmin()
   initializeFiles()
+  // Hydrate memory caches from Cloud Blob if accessible
+  try {
+    const [cloudInvoices, cloudCustomers, cloudFolders, cloudDeleted, cloudGallery] =
+      await Promise.all([
+        readFromCloudBlob<Invoice[] | null>(CLOUD_INVOICES_PATH, null),
+        readFromCloudBlob<Customer[] | null>(CLOUD_CUSTOMERS_PATH, null),
+        readFromCloudBlob<GalleryFolder[] | null>(CLOUD_FOLDERS_PATH, null),
+        readFromCloudBlob<DeletedGalleryItem[] | null>(CLOUD_DELETED_GALLERY_PATH, null),
+        readFromCloudBlob<GalleryItem[] | null>(CLOUD_GALLERY_PATH, null),
+      ])
+    if (Array.isArray(cloudInvoices)) {
+      inMemoryInvoicesCache = cloudInvoices
+      safeWriteFile(INVOICES_FILE, JSON.stringify(cloudInvoices, null, 2))
+    }
+    if (Array.isArray(cloudCustomers)) {
+      inMemoryCustomersCache = cloudCustomers
+      safeWriteFile(CUSTOMERS_FILE, JSON.stringify(cloudCustomers, null, 2))
+    }
+    if (Array.isArray(cloudFolders)) {
+      inMemoryFoldersCache = cloudFolders
+      safeWriteFile(GALLERY_FOLDERS_FILE, JSON.stringify(cloudFolders, null, 2))
+    }
+    if (Array.isArray(cloudDeleted)) {
+      inMemoryDeletedGalleryCache = cloudDeleted
+      safeWriteFile(DELETED_GALLERY_FILE, JSON.stringify(cloudDeleted, null, 2))
+    }
+    if (Array.isArray(cloudGallery)) {
+      inMemoryGalleryCache = cloudGallery
+      safeWriteFile(GALLERY_FILE, JSON.stringify(cloudGallery, null, 2))
+    }
+  } catch (e) {
+    console.error('Error hydrating cache from Cloud Blob in initializeDatabase:', e)
+  }
 }

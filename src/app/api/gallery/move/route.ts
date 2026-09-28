@@ -35,7 +35,7 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const updatedCount = moveGalleryImagesToFolder(imageIds, targetFolderId)
+    const updatedCount = await moveGalleryImagesToFolder(imageIds, targetFolderId)
     return NextResponse.json({
       message: `Moved ${updatedCount} image(s) successfully`,
       count: updatedCount,

@@ -25,7 +25,7 @@ export async function GET(request: NextRequest) {
 
   try {
     await initializeDatabase()
-    const stats = getDeletedPhotosStats()
+    const stats = await getDeletedPhotosStats()
     return new NextResponse(JSON.stringify(stats), {
       status: 200,
       headers: {
