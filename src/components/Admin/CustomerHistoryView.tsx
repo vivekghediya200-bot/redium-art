@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useMemo, useRef } from 'react'
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react'
 import InvoiceModal from './InvoiceModal'
 import CustomerReportModal from './CustomerReportModal'
 import ShopReportModal from './ShopReportModal'
@@ -94,22 +94,7 @@ export default function CustomerHistoryView() {
 
   const searchBoxRef = useRef<HTMLDivElement>(null)
 
-  useEffect(() => {
-    fetchCustomers()
-  }, [])
-
-  // Close suggestions if clicked outside
-  useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (searchBoxRef.current && !searchBoxRef.current.contains(e.target as Node)) {
-        setIsSearchFocused(false)
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [])
-
-  const fetchCustomers = async (query = '') => {
+  const fetchCustomers = useCallback(async (query = '') => {
     try {
       setLoading(true)
       const token = localStorage.getItem('adminToken')
@@ -130,16 +115,28 @@ export default function CustomerHistoryView() {
         if (!query) {
           setAllCustomers(data)
         }
-        if (data.length > 0 && !selectedCustomerId) {
-          setSelectedCustomerId(data[0].id)
-        }
       }
     } catch (err) {
       console.error('Error fetching customers:', err)
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
+
+  useEffect(() => {
+    fetchCustomers()
+  }, [fetchCustomers])
+
+  // Close suggestions if clicked outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (searchBoxRef.current && !searchBoxRef.current.contains(e.target as Node)) {
+        setIsSearchFocused(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
 
   // Live matching client suggestions prioritizing prefix and best clients
   const liveSuggestions = useMemo(() => {

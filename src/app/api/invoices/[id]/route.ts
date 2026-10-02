@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getInvoiceById, initializeDatabase } from '@/lib/mockdb'
+import { getInvoiceById, initializeDatabase } from '@/lib/mongodb'
 
 export const dynamic = 'force-dynamic'
 

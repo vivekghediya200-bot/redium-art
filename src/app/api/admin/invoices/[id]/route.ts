@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getInvoiceById, updateInvoice, deleteInvoice, initializeDatabase } from '@/lib/mockdb'
+import { getInvoiceById, updateInvoice, deleteInvoice, initializeDatabase } from '@/lib/mongodb'
 import { verifyToken, getTokenFromHeader } from '@/lib/auth'
 
 function checkAuth(request: NextRequest) {

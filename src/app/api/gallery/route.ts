@@ -4,7 +4,7 @@ import {
   addGalleryImages,
   deleteMultipleGalleryImages,
   initializeDatabase,
-} from '@/lib/mockdb'
+} from '@/lib/mongodb'
 import { verifyToken, getTokenFromHeader } from '@/lib/auth'
 
 function checkAuth(request: NextRequest) {

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import {
   getDeletedPhotosStats,
   initializeDatabase,
-} from '@/lib/mockdb'
+} from '@/lib/mongodb'
 import { verifyToken, getTokenFromHeader } from '@/lib/auth'
 
 export const dynamic = 'force-dynamic'

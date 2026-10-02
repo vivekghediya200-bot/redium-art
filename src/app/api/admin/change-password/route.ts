@@ -5,7 +5,7 @@ import {
   updateAdminCredentials,
   getAdminSyncStatus,
   initializeDatabase,
-} from '@/lib/mockdb'
+} from '@/lib/mongodb'
 
 export async function GET(request: NextRequest) {
   try {

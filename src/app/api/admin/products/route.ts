@@ -3,7 +3,7 @@ import {
   getAllProducts,
   addProduct,
   initializeDatabase,
-} from '@/lib/mockdb'
+} from '@/lib/mongodb'
 import { verifyToken, getTokenFromHeader } from '@/lib/auth'
 
 export const dynamic = 'force-dynamic'

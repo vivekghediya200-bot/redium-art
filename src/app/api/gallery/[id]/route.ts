@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { deleteGalleryImage, initializeDatabase } from '@/lib/mockdb'
+import { deleteGalleryImage, initializeDatabase } from '@/lib/mongodb'
 import { verifyToken, getTokenFromHeader } from '@/lib/auth'
 
 function checkAuth(request: NextRequest) {

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { verifyAdminPassword, initializeDatabase } from '@/lib/mockdb'
+import { verifyAdminPassword, initializeDatabase } from '@/lib/mongodb'
 import { signToken } from '@/lib/auth'
 
 export async function POST(request: NextRequest) {

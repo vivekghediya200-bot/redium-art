@@ -1,0 +1,113 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("MONGODB_URI")
+}
+
+// Gallery Folder Model
+model GalleryFolder {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  name      String
+  isPrivate Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("gallery_folders")
+}
+
+// Gallery Item Model
+model GalleryItem {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  image     String
+  folderId  String?  @db.ObjectId
+  isPrivate Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@map("gallery_items")
+}
+
+// Deleted Gallery Item Model (for tracking deleted photos)
+model DeletedGalleryItem {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  deletedAt DateTime @default(now())
+
+  @@map("deleted_gallery_items")
+}
+
+// Customer Model
+model Customer {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  name      String
+  mobile    String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  invoices  Invoice[]
+
+  @@map("customers")
+}
+
+// Invoice Item Model (embedded in Invoice)
+type InvoiceItem {
+  sr        Int
+  description String
+  qty       Int
+  rate      Float
+  total     Float
+}
+
+// Invoice Model
+model Invoice {
+  id              String       @id @default(auto()) @map("_id") @db.ObjectId
+  customerId      String       @db.ObjectId
+  customerName    String
+  customerMobile  String
+  viaCustomer     String?
+  date            String
+  businessName    String
+  businessMobile  String
+  businessAddress String
+  businessOwner   String?
+  paymentStatus   String       @default("PAID")
+  paymentMethod   String?
+  items           InvoiceItem[]
+  subtotal        Float
+  grandTotal      Float
+  notes           String?
+  createdAt       DateTime     @default(now())
+  updatedAt       DateTime     @updatedAt
+
+  customer        Customer     @relation(fields: [customerId], references: [id])
+
+  @@map("invoices")
+}
+
+// Admin Model
+model Admin {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  email     String   @unique
+  password  String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("admins")
+}
+
+// Legacy Product Model (for backward compatibility)
+model Product {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  name      String
+  image     String?
+  price     Float
+  quantity  Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("products")
+}

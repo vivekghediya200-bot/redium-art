@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getAllProducts, initializeDatabase } from '@/lib/mockdb'
+import { getAllProducts, initializeDatabase } from '@/lib/mongodb'
 
 export async function GET(request: NextRequest) {
   try {

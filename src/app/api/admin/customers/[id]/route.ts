@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { updateCustomer, deleteCustomer, initializeDatabase, getAllCustomers } from '@/lib/mockdb'
+import { updateCustomer, deleteCustomer, initializeDatabase, getAllCustomers } from '@/lib/mongodb'
 import { verifyToken, getTokenFromHeader } from '@/lib/auth'
 
 export const dynamic = 'force-dynamic'

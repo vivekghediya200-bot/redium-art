@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import MultiImageUploadModal from './MultiImageUploadModal'
 
 export interface GalleryPhoto {
@@ -97,17 +97,7 @@ export default function AdminGalleryManager() {
     }
   }
 
-  useEffect(() => {
-    fetchInitialData()
-  }, [])
-
-  const fetchInitialData = async () => {
-    setLoading(true)
-    await Promise.all([fetchPhotos(), fetchFolders(), fetchDeletedStats()])
-    setLoading(false)
-  }
-
-  const fetchPhotos = async () => {
+  const fetchPhotos = useCallback(async () => {
     try {
       const token = localStorage.getItem('adminToken')
       const res = await fetch(`/api/gallery?t=${Date.now()}`, {
@@ -128,9 +118,9 @@ export default function AdminGalleryManager() {
     } catch (err) {
       console.error('Error fetching gallery:', err)
     }
-  }
+  }, [])
 
-  const fetchFolders = async () => {
+  const fetchFolders = useCallback(async () => {
     try {
       const token = localStorage.getItem('adminToken')
       const res = await fetch(`/api/gallery/folders?t=${Date.now()}`, {
@@ -147,9 +137,9 @@ export default function AdminGalleryManager() {
     } catch (err) {
       console.error('Error fetching folders:', err)
     }
-  }
+  }, [])
 
-  const fetchDeletedStats = async () => {
+  const fetchDeletedStats = useCallback(async () => {
     try {
       const token = localStorage.getItem('adminToken')
       const res = await fetch(`/api/gallery/deleted?t=${Date.now()}`, {
@@ -166,7 +156,17 @@ export default function AdminGalleryManager() {
     } catch (err) {
       console.error('Error fetching deleted stats:', err)
     }
-  }
+  }, [])
+
+  const fetchInitialData = useCallback(async () => {
+    setLoading(true)
+    await Promise.all([fetchPhotos(), fetchFolders(), fetchDeletedStats()])
+    setLoading(false)
+  }, [fetchPhotos, fetchFolders, fetchDeletedStats])
+
+  useEffect(() => {
+    fetchInitialData()
+  }, [fetchInitialData])
 
   // Active folder details
   const activeFolder = useMemo(() => {
