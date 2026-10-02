@@ -60,8 +60,8 @@ export async function GET(request: NextRequest) {
     const filtered = query
       ? enriched.filter(
           (c) =>
-            c.name.toLowerCase().includes(query) ||
-            c.mobile.toLowerCase().includes(query)
+  c.name.toLowerCase().includes(query) ||
+  (c.mobile?.toLowerCase().includes(query) ?? false)
         )
       : enriched
 

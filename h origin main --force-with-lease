@@ -1,0 +1,21 @@
+[33m< 480ff40[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mmain[m[33m, [m[1;32mbackup-before-sync[m[33m)[m Update database integration and API
+[33m< 3c13090[m feat: persistent cloud database integration for invoices, customers, and gallery via Vercel Cloud Blob
+[33m< 4ed4678[m feat: multi-device live sync for admin credentials via Vercel Cloud Blob
+[33m< c7c84b7[m feat: live 65% deletion progress bar, tombstone lock sync, and gallery cleanup
+[33m< bab6936[m feat: photo library folder system with public/private controls, bill via-customer option, permanent deletion tombstone with live tracker, and storefront auto-update
+[33m< 5bbb82f[m feat: structured collections by date and payment method, auto-save before WhatsApp share, and robust member/photo deletion
+[33m< d02d3a3[m feat: add Google Maps location link, owner Vivek Ghediya, bill payment options, and Instagram integration
+[33m< 84052dd[m fix: sync 126 gallery images, eliminate stale CDN caching, and enforce dynamic live data
+[33m< 68717ab[m fix: batch gallery uploads in chunks of 4 with 25s timeout and compact JSON
+[33m< 22ffdb8[m feat: enable uploading unlimited photos with live progress and automatic chunking
+[33m< 7b43f9c[m fix: restore direct reliable gallery image upload with session and size error handling
+[33m< 67df7d2[m perf: compress gallery from 21.6MB to 3.5MB, add two-stage fast loading and client upload compression
+[33m< d930b6f[m feat: send actual PDF file via Web Share and add public invoice download page
+[33m< 79b1898[m feat: add edit and delete client feature and enforce strict password verification
+[33m< 63818fe[m Fix bill creation, add signature, folder picker, WhatsApp app launch, and client autocomplete
+[33m< 34e2610[m feat: white logo merge, admin email update, bill save button, remove eg placeholders and cust id, reliable whatsapp bill, and best clients report
+[33m< 1e0dc46[m chore: update gitignore for vercel and env
+[33m< 91a27a3[m Update brand logo, secure admin portal, fix PDF generation, and add sales reports
+[33m> 43393af[m[33m ([m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m Merge GitHub repository with website source
+[33m> a4b0ad2[m Add Jay Mataji Redium Art website
+[33m> 863886d[m Initial commit

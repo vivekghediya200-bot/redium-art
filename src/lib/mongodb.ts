@@ -259,13 +259,15 @@ export async function findOrCreateCustomer(name?: string, mobile?: string) {
   const trimmedMobile = String(mobile || '').trim()
 
   let existing = await prisma.customer.findFirst({
-    where: {
-      OR: [
-        trimmedMobile ? { mobile: trimmedMobile } : {},
-        trimmedName ? { name: { equals: trimmedName, mode: 'insensitive' } } : {}
-      ].filter(Boolean)
-    }
-  })
+  where: {
+    OR: [
+      ...(trimmedMobile ? [{ mobile: trimmedMobile }] : []),
+      ...(trimmedName
+        ? [{ name: { equals: trimmedName, mode: 'insensitive' as const } }]
+        : [])
+    ]
+  }
+})
 
   if (existing) {
     let updated = false
