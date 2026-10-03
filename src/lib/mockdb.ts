@@ -1213,7 +1213,7 @@ async function getCloudAdminCredentials(): Promise<any[] | null> {
   return null
 }
 
-async function saveCloudAdminCredentials(admins: any[]): Promise<boolean> {
+export async function saveCloudAdminCredentials(admins: any[]): Promise<boolean> {
   try {
     const { put } = await import('@vercel/blob')
     await put(CLOUD_ADMINS_PATH, JSON.stringify(admins, null, 2), {
