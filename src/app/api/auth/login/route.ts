@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { verifyAdminPassword, initializeDatabase } from '@/lib/mongodb'
+import { verifyAdminPassword } from '@/lib/mockdb'
 import { signToken } from '@/lib/auth'
 
 export async function POST(request: NextRequest) {
@@ -16,10 +16,7 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Initialize database
-    await initializeDatabase()
-
-    // Verify admin credentials
+    // Verify admin credentials using mockdb (Vercel Blob)
     const admin = await verifyAdminPassword(email, password)
 
     if (!admin) {
