@@ -69,7 +69,6 @@ export async function POST(request: NextRequest) {
 
   try {
     await initializeDatabase()
-
     const formData = await request.formData()
     // Support target folderId
     const folderId = (formData.get('folderId') as string) || undefined

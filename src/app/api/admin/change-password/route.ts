@@ -4,8 +4,8 @@ import {
   verifyAdminPassword,
   updateAdminPassword,
   getAdminByEmail,
-  initializeDatabase,
-} from '@/lib/mongodb'
+  createAdmin,
+} from '@/lib/mockdb'
 
 export async function GET(request: NextRequest) {
   try {
@@ -23,8 +23,6 @@ export async function GET(request: NextRequest) {
         { status: 401 }
       )
     }
-
-    await initializeDatabase()
 
     const admin = await getAdminByEmail(decoded.email)
 
@@ -117,8 +115,6 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    await initializeDatabase()
-
     const admin = await verifyAdminPassword(
       decoded.email,
       currentPassword
@@ -144,23 +140,41 @@ export async function POST(request: NextRequest) {
         )
       }
 
-      const { prisma } = await import('@/lib/prisma')
-
-      updatedAdmin = await prisma.admin.update({
-        where: { id: admin.id },
-        data: {
-          email: newEmail,
-          updatedAt: new Date(),
-        },
-      })
+      // Update email in mockdb
+      const { getAllAdmins, saveCloudAdminCredentials } = await import('@/lib/mockdb')
+      const admins = await getAllAdmins()
+      const adminIndex = admins.findIndex((a: any) => a.id === admin.id)
+      if (adminIndex !== -1) {
+        admins[adminIndex].email = newEmail
+        admins[adminIndex].updatedAt = new Date().toISOString()
+        updatedAdmin = admins[adminIndex]
+        // Save to file and cloud
+        const fs = await import('fs')
+        const path = await import('path')
+        const DATA_DIR = path.join(process.cwd(), 'data')
+        const ADMINS_FILE = path.join(DATA_DIR, 'admins.json')
+        fs.writeFileSync(ADMINS_FILE, JSON.stringify(admins, null, 2), 'utf-8')
+        await saveCloudAdminCredentials(admins)
+      }
     }
 
     // Update password if requested
     if (newPassword) {
-      updatedAdmin = await updateAdminPassword(
+      const success = await updateAdminPassword(
         updatedAdmin.id,
         newPassword
       )
+      if (!success) {
+        return NextResponse.json(
+          { message: 'Failed to update password' },
+          { status: 500 }
+        )
+      }
+      // Refresh admin data
+      const refreshedAdmin = await getAdminByEmail(newEmail || admin.email)
+      if (refreshedAdmin) {
+        updatedAdmin = refreshedAdmin
+      }
     }
 
     const newToken = signToken({

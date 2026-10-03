@@ -43,7 +43,6 @@ export async function POST(request: NextRequest) {
 
   try {
     await initializeDatabase()
-
     const formData = await request.formData()
     const name = formData.get('name') as string
     const price = parseFloat(formData.get('price') as string)

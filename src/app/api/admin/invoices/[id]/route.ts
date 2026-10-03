@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getInvoiceById, updateInvoice, deleteInvoice, initializeDatabase } from '@/lib/mongodb'
+import { getInvoiceById, updateInvoice, deleteInvoice } from '@/lib/mockdb'
 import { verifyToken, getTokenFromHeader } from '@/lib/auth'
 
 function checkAuth(request: NextRequest) {
@@ -20,7 +20,6 @@ export async function GET(
   }
 
   try {
-    await initializeDatabase()
     const invoice = await getInvoiceById(params.id)
 
     if (!invoice) {
@@ -50,7 +49,6 @@ export async function PUT(
   }
 
   try {
-    await initializeDatabase()
     const body = await request.json()
     const updated = await updateInvoice(params.id, body)
 
@@ -84,7 +82,6 @@ export async function DELETE(
   }
 
   try {
-    await initializeDatabase()
     const success = await deleteInvoice(params.id)
 
     if (!success) {

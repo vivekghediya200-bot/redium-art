@@ -1,0 +1,29 @@
+QUICK SETUP INSTRUCTIONS
+========================
+
+Your MongoDB connection string is ready:
+mongodb+srv://vivekghediya200_db_user:YOUR_PASSWORD@cluster0.izmg4qk.mongodb.net/jay-mataji-redium-art?retryWrites=true&w=majority
+
+STEPS TO CONNECT:
+
+1. Create .env.local file in your project root with this content:
+
+MONGODB_URI=mongodb+srv://vivekghediya200_db_user:YOUR_PASSWORD@cluster0.izmg4qk.mongodb.net/jay-mataji-redium-art?retryWrites=true&w=majority
+JWT_SECRET=your-jwt-secret-key-generate-a-secure-random-string
+ADMIN_EMAIL=admin@jaymataji.com
+ADMIN_PASSWORD=Admin@123
+
+2. Replace YOUR_PASSWORD with your actual MongoDB database password
+
+3. Generate Prisma client:
+   npx prisma generate
+
+4. Test the connection:
+   npx prisma db push
+
+5. Start the development server:
+   npm run dev
+
+6. Open http://localhost:3000
+
+For Vercel deployment, add the same MONGODB_URI (with real password) in Vercel Settings > Environment Variables.
